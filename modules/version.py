@@ -1,7 +1,7 @@
-APP_VERSION = "1.0.0"
-APP_RELEASE_TITLE = "Streamlit Migration and Finance Review Workspace"
+APP_VERSION = "1.0.1"
+APP_RELEASE_TITLE = "Bulk Keyword Management"
 APP_RELEASE_NOTES = (
-    "Aplikasi dimigrasikan ke Streamlit dengan workspace review finance, navigasi modern, dan alur deploy Streamlit Cloud."
+    "Review potensi NAC dengan mudah~"
 )
 
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 import pandas as pd
 
@@ -96,6 +96,38 @@ def delete_keyword(keyword_selection: str) -> str:
     return "Keyword dinonaktifkan. Data tidak dihapus permanen agar tetap audit-friendly."
 
 
+def bulk_deactivate_keywords(keyword_ids: Iterable[Any]) -> str:
+    ids = normalize_keyword_ids(keyword_ids)
+    if not ids:
+        return "Pilih minimal satu keyword untuk dinonaktifkan."
+    with db.connect() as conn:
+        for keyword_id in ids:
+            conn.execute("UPDATE nac_keywords SET status='inactive', updated_at=? WHERE id=?", (db.now(), keyword_id))
+    return f"{len(ids)} keyword dinonaktifkan. Data tetap tersimpan untuk audit dan bisa direstore."
+
+
+def bulk_restore_keywords(keyword_ids: Iterable[Any]) -> str:
+    ids = normalize_keyword_ids(keyword_ids)
+    if not ids:
+        return "Pilih minimal satu keyword untuk direstore."
+    with db.connect() as conn:
+        for keyword_id in ids:
+            conn.execute("UPDATE nac_keywords SET status='active', updated_at=? WHERE id=?", (db.now(), keyword_id))
+    return f"{len(ids)} keyword direstore ke status active."
+
+
+def bulk_delete_keywords(keyword_ids: Iterable[Any]) -> str:
+    ids = normalize_keyword_ids(keyword_ids)
+    if not ids:
+        return "Pilih minimal satu keyword untuk dihapus permanen."
+    placeholders = ",".join("?" for _ in ids)
+    with db.connect() as conn:
+        conn.execute(f"DELETE FROM nac_synonyms WHERE nac_keyword_id IN ({placeholders})", ids)
+        conn.execute(f"DELETE FROM exceptions WHERE nac_keyword_id IN ({placeholders})", ids)
+        conn.execute(f"DELETE FROM nac_keywords WHERE id IN ({placeholders})", ids)
+    return f"{len(ids)} keyword dihapus permanen beserta sinonim dan exception terkait. Feedback historis tetap disimpan."
+
+
 def import_keywords_file(file_path: str | Path) -> str:
     count = import_keywords_from_excel(file_path)
     return f"{count} keyword berhasil diimpor dari Excel."
@@ -107,6 +139,18 @@ def export_keywords_file(path: str | Path) -> str:
 
 def parse_row_id(selection: str) -> str:
     return str(selection or "").split("|", 1)[0].strip()
+
+
+def normalize_keyword_ids(keyword_ids: Iterable[Any]) -> list[int]:
+    normalized = []
+    for value in keyword_ids or []:
+        try:
+            keyword_id = int(value)
+        except (TypeError, ValueError):
+            continue
+        if keyword_id not in normalized:
+            normalized.append(keyword_id)
+    return normalized
 
 
 def keyword_choices(active_only: bool = True) -> list[str]:

@@ -2,7 +2,7 @@
 
 RAB NAC Reviewer adalah aplikasi Streamlit untuk membantu reviewer finance melakukan review awal dokumen RAB dan mendeteksi potensi NAC. Aplikasi ini tidak menggantikan keputusan reviewer; hasil deteksi wajib divalidasi terhadap PMK, kebijakan internal, dan konteks pekerjaan.
 
-Versi aktif: `v1.0.0 - Streamlit Migration and Finance Review Workspace`.
+Versi aktif: `v1.0.1 - Bulk Keyword Management`.
 
 ## Fitur
 
@@ -12,6 +12,7 @@ Versi aktif: `v1.0.0 - Streamlit Migration and Finance Review Workspace`.
 - Database SQLite lokal untuk keyword, sinonim, allowable keyword, exception, settings, dan feedback.
 - Export PDF ringkasan potensi NAC, PDF seluruh material, Excel seluruh material, dan database keyword.
 - Backup dan restore SQLite dari UI.
+- Bulk nonaktifkan, restore, dan hapus permanen keyword NAC dari tabel checkbox.
 - Siap deploy ke Streamlit Community Cloud gratis.
 
 ## Cara Pakai Web
@@ -71,6 +72,9 @@ python -m pytest
 
 - Database default dibuat otomatis di `data/app.db`.
 - File `data/app.db` tidak dikomit ke GitHub.
+- Untuk mengelola banyak keyword, buka `Database NAC`, centang beberapa baris pada tabel, lalu pilih `Nonaktifkan Selected`.
+- Untuk restore, buka `Keyword nonaktif`, centang keyword yang ingin dikembalikan, lalu pilih `Restore Selected`.
+- Untuk hapus permanen, buka panel `Hapus permanen selected`, ketik `HAPUS PERMANEN`, lalu klik tombol hapus. Gunakan hanya bila data memang tidak perlu jejak keyword/sinonim/exception.
 - Untuk backup, buka `Database NAC`, klik `Buat Backup Database`, lalu download file SQLite.
 - Untuk restore, upload file backup SQLite pada bagian `Restore dari backup SQLite`.
 - Env var opsional:
@@ -103,13 +107,13 @@ Lalu buka `Settings` dan ubah `Deteksi Sinonim/Parafrasa Otomatis` ke `Aktif`.
 
 ## Versioning dan Rollback
 
-Rilis ini ditandai sebagai tag git `v1.0.0`.
+Rilis ini ditandai sebagai tag git `v1.0.1`.
 
 Rollback lokal:
 
 ```powershell
 git fetch --tags
-git checkout v1.0.0
+git checkout v1.0.1
 ```
 
 Rollback deploy Streamlit Cloud:

@@ -83,6 +83,31 @@ def test_keyword_and_feedback_actions(monkeypatch, tmp_path):
     assert len(db.get_feedback()) == 1
 
 
+def test_bulk_keyword_lifecycle_keeps_feedback(monkeypatch, tmp_path):
+    db, _, actions, _ = load_modules(monkeypatch, tmp_path)
+    first_id = db.add_keyword("Audit", "keyword bulk satu", "", "", "medium", "active", "")
+    second_id = db.add_keyword("Audit", "keyword bulk dua", "", "", "medium", "active", "")
+    db.add_synonym(first_id, "bulk alias")
+    db.add_exception(first_id, "bulk pattern", "test", "lower_confidence", 25)
+    db.save_feedback("1", "keyword bulk satu", "keyword bulk satu", "Correct NAC", "", "history")
+
+    deactivated = actions.bulk_deactivate_keywords([first_id, second_id])
+    assert "2 keyword dinonaktifkan" in deactivated
+    statuses = {row["keyword"]: row["status"] for row in db.get_keywords(False) if row["keyword"].startswith("keyword bulk")}
+    assert statuses == {"keyword bulk satu": "inactive", "keyword bulk dua": "inactive"}
+
+    restored = actions.bulk_restore_keywords([first_id])
+    assert "1 keyword direstore" in restored
+    assert db.get_keyword_by_text("keyword bulk satu")["status"] == "active"
+
+    deleted = actions.bulk_delete_keywords([first_id])
+    assert "1 keyword dihapus permanen" in deleted
+    assert db.get_keyword_by_text("keyword bulk satu") is None
+    assert not [row for row in db.get_synonyms(False) if row.get("nac_keyword_id") == first_id]
+    assert not [row for row in db.get_exceptions(False) if row.get("nac_keyword_id") == first_id]
+    assert len(db.get_feedback()) == 1
+
+
 def test_exports_create_files(monkeypatch, tmp_path):
     _, _, _, export_engine = load_modules(monkeypatch, tmp_path)
     results = [
@@ -104,3 +129,17 @@ def test_exports_create_files(monkeypatch, tmp_path):
     assert excel_path.suffix == ".xlsx"
     assert pdf_path.exists()
     assert pdf_path.suffix == ".pdf"
+
+
+def test_streamlit_app_smoke_shows_release_copy(monkeypatch, tmp_path):
+    monkeypatch.setenv("RAB_NAC_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("RAB_NAC_DB_PATH", str(tmp_path / "data" / "app.db"))
+    monkeypatch.setenv("RAB_NAC_EXPORT_DIR", str(tmp_path / "exports"))
+    monkeypatch.setenv("RAB_NAC_UPLOAD_DIR", str(tmp_path / "uploads"))
+
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file("streamlit_app.py", default_timeout=20).run()
+    assert not at.exception
+    markdown_text = "\n".join(str(item.value) for item in at.markdown)
+    assert "Review potensi NAC dengan mudah~" in markdown_text

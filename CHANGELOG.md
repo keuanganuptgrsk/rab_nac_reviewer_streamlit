@@ -2,6 +2,14 @@
 
 Semua penambahan fitur harus dicatat dengan format: versi, judul, tanggal, dan keterangan.
 
+## v1.0.1 - Bulk Keyword Management - 2026-05-11
+
+- Mengganti hapus keyword berbasis dropdown menjadi tabel checkbox bulk action.
+- Menambahkan aksi `Nonaktifkan Selected` untuk soft-delete audit-friendly.
+- Menambahkan `Hapus Permanen Selected` dengan konfirmasi `HAPUS PERMANEN`.
+- Menambahkan restore massal untuk keyword nonaktif.
+- Mengganti copy rilis menjadi `Review potensi NAC dengan mudah~`.
+
 ## v1.0.0 - Streamlit Migration and Finance Review Workspace - 2026-05-11
 
 - Memigrasikan aplikasi dari Gradio ke Streamlit dengan entry point `streamlit_app.py`.

@@ -296,6 +296,89 @@ def redaction_page() -> None:
     st.info(result.get("redaction_suggestion") or "Tidak ada saran khusus.")
 
 
+def keyword_alias_map() -> dict[int, list[str]]:
+    aliases: dict[int, list[str]] = {}
+    for row in db.get_synonyms(False):
+        keyword_id = row.get("nac_keyword_id")
+        if keyword_id is None:
+            continue
+        aliases.setdefault(int(keyword_id), []).append(str(row.get("synonym") or ""))
+    return aliases
+
+
+def filter_keyword_rows(rows: list[dict], search: str = "", categories: list[str] | None = None, severities: list[str] | None = None, statuses: list[str] | None = None) -> list[dict]:
+    search_l = str(search or "").strip().lower()
+    categories = categories or []
+    severities = severities or []
+    statuses = statuses or []
+    filtered = []
+    for row in rows:
+        if categories and row.get("category") not in categories:
+            continue
+        if severities and row.get("severity") not in severities:
+            continue
+        if statuses and row.get("status") not in statuses:
+            continue
+        haystack = " ".join(str(row.get(key) or "") for key in ["id", "category", "keyword", "severity", "description", "reference", "notes", "status"]).lower()
+        if search_l and search_l not in haystack:
+            continue
+        filtered.append(row)
+    return filtered
+
+
+def keyword_editor_frame(rows: list[dict], aliases: dict[int, list[str]]) -> pd.DataFrame:
+    records = []
+    for row in rows:
+        keyword_id = int(row.get("id"))
+        synonym_text = ", ".join(alias for alias in aliases.get(keyword_id, []) if alias)
+        records.append(
+            {
+                "Pilih": False,
+                "ID": keyword_id,
+                "Kategori": row.get("category", ""),
+                "Keyword": row.get("keyword", ""),
+                "Severity": row.get("severity", ""),
+                "Sinonim": synonym_text,
+                "Catatan": row.get("notes") or row.get("description", ""),
+            }
+        )
+    return pd.DataFrame(records, columns=["Pilih", "ID", "Kategori", "Keyword", "Severity", "Sinonim", "Catatan"])
+
+
+def selected_keyword_ids(frame: pd.DataFrame | None) -> list[int]:
+    if frame is None or frame.empty or "Pilih" not in frame.columns:
+        return []
+    selected = frame[frame["Pilih"].fillna(False).astype(bool)]
+    return [int(value) for value in selected["ID"].tolist()]
+
+
+def keyword_editor(
+    frame: pd.DataFrame,
+    key: str,
+    empty_message: str,
+) -> pd.DataFrame:
+    if frame.empty:
+        ui.empty_state(empty_message)
+        return frame
+    return st.data_editor(
+        frame,
+        key=key,
+        width="stretch",
+        hide_index=True,
+        height=ui.dataframe_height(frame, 260, 620),
+        disabled=["ID", "Kategori", "Keyword", "Severity", "Sinonim", "Catatan"],
+        column_config={
+            "Pilih": st.column_config.CheckboxColumn("Pilih", help="Centang keyword untuk bulk action.", default=False),
+            "ID": st.column_config.NumberColumn("ID", width="small"),
+            "Kategori": st.column_config.TextColumn("Kategori", width="medium"),
+            "Keyword": st.column_config.TextColumn("Keyword", width="medium"),
+            "Severity": st.column_config.TextColumn("Severity", width="small"),
+            "Sinonim": st.column_config.TextColumn("Sinonim", width="large"),
+            "Catatan": st.column_config.TextColumn("Catatan", width="large"),
+        },
+    )
+
+
 def database_page() -> None:
     ui.hero(APP_VERSION, APP_RELEASE_TITLE, "Kelola keyword NAC, sinonim, allowable keyword, exception, backup, dan import data.", current_metrics())
 
@@ -326,23 +409,54 @@ def database_page() -> None:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
 
-    ui.section_label("Daftar keyword aktif")
-    search = st.text_input("Cari keyword atau kategori", placeholder="Contoh: konsumsi, transport, hadiah")
-    keywords = pd.DataFrame(db.get_keywords(False))
-    if not keywords.empty:
-        keywords = keywords[keywords["status"].eq("active")]
-        if search:
-            mask = keywords.fillna("").astype(str).agg(" ".join, axis=1).str.lower().str.contains(search.lower(), na=False)
-            keywords = keywords[mask]
-        show_cols = ["id", "category", "keyword", "severity", "description", "reference", "notes"]
-        st.dataframe(keywords[[col for col in show_cols if col in keywords.columns]], width="stretch", hide_index=True, height=ui.dataframe_height(keywords))
-    else:
-        ui.empty_state("Database keyword masih kosong.")
+    ui.section_label("Kelola keyword NAC")
+    all_keywords = db.get_keywords(False)
+    aliases = keyword_alias_map()
+    category_options = sorted({row.get("category") for row in all_keywords if row.get("category")})
+    severity_options = sorted({row.get("severity") for row in all_keywords if row.get("severity")})
+    status_options = sorted({row.get("status") for row in all_keywords if row.get("status")})
 
-    with st.expander("Nonaktifkan keyword", expanded=False):
-        selection = st.selectbox("Keyword", actions.keyword_choices(active_only=True))
-        if st.button("Nonaktifkan Keyword"):
-            st.warning(actions.delete_keyword(selection))
+    f1, f2, f3, f4 = st.columns([1.4, 1, 1, 1])
+    with f1:
+        keyword_search = st.text_input("Cari keyword", placeholder="Contoh: konsumsi, transport, hadiah")
+    with f2:
+        category_filter = st.multiselect("Kategori", category_options)
+    with f3:
+        severity_filter = st.multiselect("Severity", severity_options)
+    with f4:
+        default_status = ["active"] if "active" in status_options else status_options
+        status_filter = st.multiselect("Status", status_options, default=default_status)
+
+    filtered_keywords = filter_keyword_rows(all_keywords, keyword_search, category_filter, severity_filter, status_filter)
+    keyword_frame = keyword_editor_frame(filtered_keywords, aliases)
+    edited_keywords = keyword_editor(keyword_frame, "keyword_bulk_editor", "Database keyword masih kosong atau filter tidak menemukan data.")
+    selected_ids = selected_keyword_ids(edited_keywords)
+    ui.status_note(f"{len(selected_ids)} keyword dipilih dari {len(keyword_frame)} baris yang sedang tampil.")
+
+    a1, a2 = st.columns([1, 2])
+    with a1:
+        if st.button("Nonaktifkan Selected", type="primary", disabled=not selected_ids):
+            st.warning(actions.bulk_deactivate_keywords(selected_ids))
+            st.rerun()
+    with a2:
+        with st.expander("Hapus permanen selected", expanded=False):
+            st.warning("Aksi ini menghapus keyword, sinonim, dan exception terkait dari SQLite. Feedback historis tetap disimpan.")
+            st.caption(f"Keyword yang akan dihapus permanen: {len(selected_ids)}")
+            confirmation = st.text_input("Ketik HAPUS PERMANEN untuk mengaktifkan tombol", key="hard_delete_confirmation")
+            if st.button("Hapus Permanen Selected", disabled=not selected_ids or confirmation != "HAPUS PERMANEN"):
+                st.error(actions.bulk_delete_keywords(selected_ids))
+                st.rerun()
+
+    with st.expander("Keyword nonaktif", expanded=False):
+        inactive_search = st.text_input("Cari keyword nonaktif", placeholder="Cari keyword yang ingin direstore")
+        inactive_rows = filter_keyword_rows(all_keywords, inactive_search, statuses=["inactive"])
+        inactive_frame = keyword_editor_frame(inactive_rows, aliases)
+        edited_inactive = keyword_editor(inactive_frame, "keyword_inactive_editor", "Belum ada keyword nonaktif.")
+        restore_ids = selected_keyword_ids(edited_inactive)
+        st.caption(f"{len(restore_ids)} keyword nonaktif dipilih untuk restore.")
+        if st.button("Restore Selected", disabled=not restore_ids):
+            st.success(actions.bulk_restore_keywords(restore_ids))
+            st.rerun()
 
     with st.expander("Sinonim, allowable keyword, dan exception", expanded=False):
         tabs = st.tabs(["Sinonim", "Allowable", "Exception"])
@@ -422,7 +536,7 @@ def settings_page() -> None:
         st.markdown(version_banner())
         st.markdown(
             """
-Rilis ini memakai tag git `v1.0.0`. Untuk rollback lokal, gunakan tag tersebut dari GitHub atau jalankan `git checkout v1.0.0` pada salinan repo. Untuk Streamlit Cloud, deploy ulang branch atau tag yang ingin dipakai.
+Rilis ini memakai tag git `v1.0.1`. Untuk rollback lokal, gunakan tag tersebut dari GitHub atau jalankan `git checkout v1.0.1` pada salinan repo. Untuk Streamlit Cloud, deploy ulang branch atau tag yang ingin dipakai.
 """
         )
 
