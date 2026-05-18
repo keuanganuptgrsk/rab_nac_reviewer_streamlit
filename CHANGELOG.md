@@ -2,6 +2,11 @@
 
 Semua penambahan fitur harus dicatat dengan format: versi, judul, tanggal, dan keterangan.
 
+## Unreleased
+
+- Menambahkan rencana upgrade deteksi sinonim dan parafrasa Bahasa Indonesia berbasis semantic similarity Hugging Face yang tetap realistis untuk Streamlit Community Cloud gratis.
+- Mendokumentasikan rekomendasi model `LazarusNLP/all-indo-e5-small-v4`, fallback multilingual, batasan resource cloud gratis, strategi cache, scoring hybrid, fallback lexical, dan test plan untuk rilis `v1.2.0`.
+
 ## v1.1.0 - NAC 2026 Keyword Pack - 2026-05-18
 
 - Mengganti seed keyword demo dengan keyword NAC 2026 Kategori A dan Kategori B.

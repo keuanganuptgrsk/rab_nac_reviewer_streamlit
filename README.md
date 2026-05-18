@@ -117,6 +117,8 @@ python -m pip install sentence-transformers scikit-learn
 
 Lalu buka `Settings` dan ubah `Deteksi Sinonim/Parafrasa Otomatis` ke `Aktif`.
 
+Roadmap semantic Bahasa Indonesia untuk sinonim/parafrasa NAC berada di [docs/semantic_similarity_indonesia_plan.md](docs/semantic_similarity_indonesia_plan.md). Rekomendasi default berikutnya adalah model Hugging Face `LazarusNLP/all-indo-e5-small-v4` dengan mode `semantic lite opt-in`: model dan index siap dipakai, tetapi tetap bisa dimatikan agar Streamlit Community Cloud gratis tidak berat saat cold start.
+
 ## Versioning dan Rollback
 
 Rilis ini ditandai sebagai tag git `v1.1.0`.
