@@ -52,8 +52,54 @@ def test_excel_upload_and_detects_konsumsi(monkeypatch, tmp_path):
 
     assert "Review selesai" in message
     assert len(results) == 2
-    assert results[0]["matched_keyword"] in {"konsumsi", "konsumsi rapat"}
+    assert results[0]["matched_keyword"] in {"Bahan Makanan dan Konsumsi", "Rapat Koordinasi Penyediaan Tenaga Listrik Proporsi Konsumsi"}
+    assert results[0]["transaction_type"]
+    assert results[0]["correction_percentage_label"]
     assert results[0]["confidence_label"] in {"Sedang", "Tinggi", "Sangat tinggi"}
+
+
+def test_nac_2026_seed_pack_replaces_demo_keywords(monkeypatch, tmp_path):
+    db, _, _, _ = load_modules(monkeypatch, tmp_path)
+    keywords = db.get_keywords(False)
+
+    assert keywords
+    assert not [row for row in keywords if str(row.get("reference") or "").startswith("DEMO")]
+    assert "Kategori A - PMK Non BPP" in {row["category"] for row in keywords}
+    assert "Kategori B - Koreksi BPP" in {row["category"] for row in keywords}
+    assert all(row.get("transaction_type") for row in keywords)
+    assert all(row.get("correction_percentage") not in (None, "") for row in keywords)
+
+
+def test_nac_2026_detection_metadata(monkeypatch, tmp_path):
+    _, review_flow, _, _ = load_modules(monkeypatch, tmp_path)
+
+    samples = {
+        "beban pajak penghasilan pasal 21 pegawai": 100,
+        "bahan makanan dan konsumsi": 100,
+        "penyusutan aset tetap dari hibah": 100,
+        "sewa kendaraan operasional": 29,
+        "management building CS satpam taman": 10,
+        "SPPD non diklat": 21,
+        "renovasi ruang kerja": 20,
+    }
+
+    for text, expected_percentage in samples.items():
+        result = review_flow.analyze_redaction(text)
+        assert result is not None
+        assert result["matched_keyword"]
+        assert int(float(result["correction_percentage"])) == expected_percentage
+        assert result["transaction_type"]
+
+
+def test_allowable_exceptions_reduce_false_positive(monkeypatch, tmp_path):
+    _, review_flow, _, _ = load_modules(monkeypatch, tmp_path)
+
+    result = review_flow.analyze_redaction("konsumsi bahan bakar genset")
+
+    assert result is not None
+    assert result["allowable_score"] >= 60
+    assert result["confidence_label"] in {"Sangat rendah", "Rendah"}
+    assert "Exception cocok" in result["explanation"]
 
 
 def test_settings_mapping():
@@ -129,6 +175,9 @@ def test_exports_create_files(monkeypatch, tmp_path):
     assert excel_path.suffix == ".xlsx"
     assert pdf_path.exists()
     assert pdf_path.suffix == ".pdf"
+    exported = pd.read_excel(excel_path)
+    assert "Prosentase NAC" in exported.columns
+    assert "Type of Transaction" in exported.columns
 
 
 def test_streamlit_app_smoke_shows_release_copy(monkeypatch, tmp_path):

@@ -89,6 +89,16 @@ def _candidate_phrase(original, norm_text, keyword):
     return str(keyword or "").strip()
 
 
+def _percentage_label(value):
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return ""
+    if numeric.is_integer():
+        return f"{int(numeric)}%"
+    return f"{numeric:.2f}%"
+
+
 def detect_item(item, settings=None):
     settings = settings or db.get_settings()
     original = item.get("original_text", "")
@@ -110,7 +120,19 @@ def detect_item(item, settings=None):
             syn_norm = normalize_text(row.get("synonym", ""))
             if syn_norm and syn_norm in norm:
                 best = {
-                    "row": {"id": row.get("nac_keyword_id"), "keyword": row.get("parent_keyword"), "category": row.get("category"), "severity": row.get("severity", "medium")},
+                    "row": {
+                        "id": row.get("nac_keyword_id"),
+                        "keyword": row.get("parent_keyword"),
+                        "category": row.get("category"),
+                        "severity": row.get("severity", "medium"),
+                        "nac_group": row.get("nac_group", ""),
+                        "correction_percentage": row.get("correction_percentage"),
+                        "transaction_type": row.get("transaction_type", ""),
+                        "gl_account": row.get("gl_account", ""),
+                        "gl_account_description": row.get("gl_account_description", ""),
+                        "source_reference": row.get("source_reference", ""),
+                        "source_slide": row.get("source_slide", ""),
+                    },
                     "match_type": "synonym",
                     "exact_syn": float(row.get("weight", 0.9)) * 100,
                     "fuzzy": 95,
@@ -179,6 +201,14 @@ def detect_item(item, settings=None):
         "total_price": item.get("total_price", ""),
         "matched_keyword": matched.get("keyword", ""),
         "matched_category": matched.get("category", ""),
+        "nac_group": matched.get("nac_group", ""),
+        "correction_percentage": matched.get("correction_percentage", ""),
+        "correction_percentage_label": _percentage_label(matched.get("correction_percentage")),
+        "transaction_type": matched.get("transaction_type", ""),
+        "gl_account": matched.get("gl_account", ""),
+        "gl_account_description": matched.get("gl_account_description", ""),
+        "source_reference": matched.get("source_reference", ""),
+        "source_slide": matched.get("source_slide", ""),
         "match_type": best["match_type"],
         "fuzzy_score": round(best["fuzzy"], 2),
         "semantic_score": round(best["semantic"], 2),
@@ -206,6 +236,10 @@ def _explanation(best, matched, allowable_score, allowable_kw, exc, feedback_adj
     parts = []
     if matched:
         parts.append(f"Terindikasi melalui {best['match_type']} terhadap '{matched.get('keyword')}'.")
+        if matched.get("transaction_type"):
+            parts.append(f"Type of transaction: {matched.get('transaction_type')}.")
+        if matched.get("correction_percentage") not in (None, ""):
+            parts.append(f"Prosentase NAC: {_percentage_label(matched.get('correction_percentage'))}.")
     else:
         parts.append("Tidak ada keyword NAC kuat yang cocok.")
     if allowable_score >= 60:

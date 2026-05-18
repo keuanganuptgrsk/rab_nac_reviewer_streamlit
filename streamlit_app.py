@@ -277,6 +277,8 @@ def redaction_page() -> None:
     label = result.get("confidence_label", "-")
     category = result.get("matched_category") or "Tidak ada kategori kuat"
     keyword = result.get("matched_keyword") or "-"
+    percentage = result.get("correction_percentage_label") or "-"
+    transaction_type = result.get("transaction_type") or "-"
     st.markdown(
         f"""
 <div class="hero-panel">
@@ -286,6 +288,8 @@ def redaction_page() -> None:
   <div class="hero-panel-line"></div>
   <div class="hero-panel-copy"><strong>Kategori:</strong> {html.escape(category)}</div>
   <div class="hero-panel-copy"><strong>Keyword:</strong> {html.escape(keyword)}</div>
+  <div class="hero-panel-copy"><strong>Prosentase NAC:</strong> {html.escape(percentage)}</div>
+  <div class="hero-panel-copy"><strong>Type of Transaction:</strong> {html.escape(transaction_type)}</div>
 </div>
 """,
         unsafe_allow_html=True,
@@ -319,7 +323,13 @@ def filter_keyword_rows(rows: list[dict], search: str = "", categories: list[str
             continue
         if statuses and row.get("status") not in statuses:
             continue
-        haystack = " ".join(str(row.get(key) or "") for key in ["id", "category", "keyword", "severity", "description", "reference", "notes", "status"]).lower()
+        haystack = " ".join(
+            str(row.get(key) or "")
+            for key in [
+                "id", "category", "keyword", "severity", "description", "reference", "notes",
+                "status", "nac_group", "transaction_type", "gl_account", "gl_account_description",
+            ]
+        ).lower()
         if search_l and search_l not in haystack:
             continue
         filtered.append(row)
@@ -338,11 +348,13 @@ def keyword_editor_frame(rows: list[dict], aliases: dict[int, list[str]]) -> pd.
                 "Kategori": row.get("category", ""),
                 "Keyword": row.get("keyword", ""),
                 "Severity": row.get("severity", ""),
+                "Prosentase": f"{int(float(row.get('correction_percentage')))}%" if row.get("correction_percentage") not in (None, "") else "",
+                "Type of Transaction": row.get("transaction_type", ""),
                 "Sinonim": synonym_text,
                 "Catatan": row.get("notes") or row.get("description", ""),
             }
         )
-    return pd.DataFrame(records, columns=["Pilih", "ID", "Kategori", "Keyword", "Severity", "Sinonim", "Catatan"])
+    return pd.DataFrame(records, columns=["Pilih", "ID", "Kategori", "Keyword", "Severity", "Prosentase", "Type of Transaction", "Sinonim", "Catatan"])
 
 
 def selected_keyword_ids(frame: pd.DataFrame | None) -> list[int]:
@@ -366,13 +378,15 @@ def keyword_editor(
         width="stretch",
         hide_index=True,
         height=ui.dataframe_height(frame, 260, 620),
-        disabled=["ID", "Kategori", "Keyword", "Severity", "Sinonim", "Catatan"],
+        disabled=["ID", "Kategori", "Keyword", "Severity", "Prosentase", "Type of Transaction", "Sinonim", "Catatan"],
         column_config={
             "Pilih": st.column_config.CheckboxColumn("Pilih", help="Centang keyword untuk bulk action.", default=False),
             "ID": st.column_config.NumberColumn("ID", width="small"),
             "Kategori": st.column_config.TextColumn("Kategori", width="medium"),
             "Keyword": st.column_config.TextColumn("Keyword", width="medium"),
             "Severity": st.column_config.TextColumn("Severity", width="small"),
+            "Prosentase": st.column_config.TextColumn("Prosentase", width="small"),
+            "Type of Transaction": st.column_config.TextColumn("Type of Transaction", width="large"),
             "Sinonim": st.column_config.TextColumn("Sinonim", width="large"),
             "Catatan": st.column_config.TextColumn("Catatan", width="large"),
         },
@@ -536,15 +550,15 @@ def settings_page() -> None:
         st.markdown(version_banner())
         st.markdown(
             """
-Rilis ini memakai tag git `v1.0.1`. Untuk rollback lokal, gunakan tag tersebut dari GitHub atau jalankan `git checkout v1.0.1` pada salinan repo. Untuk Streamlit Cloud, deploy ulang branch atau tag yang ingin dipakai.
+Rilis ini memakai tag git `v1.1.0`. Untuk rollback lokal, gunakan tag stabil dari GitHub atau jalankan `git checkout v1.0.1` pada salinan repo. Untuk Streamlit Cloud, deploy ulang branch atau tag yang ingin dipakai.
 """
         )
 
-    with st.expander("Reset demo database", expanded=False):
-        st.warning("Reset akan membuat ulang database demo dan menghapus perubahan SQLite lokal pada environment aktif.")
-        if st.button("Reset demo database"):
+    with st.expander("Reset database NAC 2026", expanded=False):
+        st.warning("Reset akan membuat ulang database dari seed NAC 2026 dan menghapus perubahan SQLite lokal pada environment aktif.")
+        if st.button("Reset database NAC 2026"):
             db.reset_demo_database()
-            st.success("Demo database dibuat ulang.")
+            st.success("Database NAC 2026 dibuat ulang.")
 
 
 def main() -> None:

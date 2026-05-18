@@ -40,6 +40,13 @@ def import_keywords_from_excel(file_path):
             row.get("status", "active") or "active",
             row.get("notes", ""),
             "excel_import",
+            row.get("nac_group", ""),
+            row.get("correction_percentage", None) if row.get("correction_percentage", "") != "" else None,
+            row.get("transaction_type", ""),
+            row.get("gl_account", ""),
+            row.get("gl_account_description", ""),
+            row.get("source_reference", ""),
+            row.get("source_slide", ""),
         )
         for syn in str(row.get("synonyms", "")).split(";"):
             syn = syn.strip()

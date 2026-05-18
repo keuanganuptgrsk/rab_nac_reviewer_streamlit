@@ -18,18 +18,31 @@ def export_review_excel(results):
         findings = pd.DataFrame(columns=[
             "row_id", "source_file", "page_or_sheet", "original_text", "normalized_text", "item_description",
             "volume", "unit", "unit_price", "total_price", "matched_keyword", "matched_category", "match_type",
+            "nac_group", "correction_percentage", "correction_percentage_label", "transaction_type",
+            "gl_account", "gl_account_description",
             "fuzzy_score", "semantic_score", "allowable_score", "final_confidence", "confidence_label",
             "explanation", "recommended_action", "redaction_suggestion", "suggested_synonym_candidate",
             "suggested_synonym_for_keyword", "synonym_suggestion_confidence", "synonym_suggestion_reason",
             "user_feedback", "reviewer_notes",
         ])
+    required_columns = [
+        "row_id", "redaction_suggestion", "recommended_action", "matched_keyword", "matched_category",
+        "nac_group", "correction_percentage_label", "transaction_type", "gl_account",
+        "gl_account_description", "match_type", "fuzzy_score", "semantic_score",
+    ]
+    for column in required_columns:
+        if column not in findings.columns:
+            findings[column] = ""
     summary = _summary(findings)
     with pd.ExcelWriter(path, engine="xlsxwriter") as writer:
         summary.to_excel(writer, sheet_name="Summary", index=False)
         findings.to_excel(writer, sheet_name="Findings", index=False)
-        findings[["row_id", "redaction_suggestion", "recommended_action"]].to_excel(writer, sheet_name="Suggestions", index=False)
+        findings[["row_id", "redaction_suggestion", "recommended_action", "correction_percentage_label", "transaction_type"]].to_excel(writer, sheet_name="Suggestions", index=False)
         pd.DataFrame(db.get_feedback()).to_excel(writer, sheet_name="Feedback Log", index=False)
-        findings[["row_id", "matched_keyword", "matched_category", "match_type", "fuzzy_score", "semantic_score"]].to_excel(writer, sheet_name="Keyword Matches", index=False)
+        findings[[
+            "row_id", "matched_keyword", "matched_category", "nac_group", "correction_percentage_label",
+            "transaction_type", "gl_account", "gl_account_description", "match_type", "fuzzy_score", "semantic_score",
+        ]].to_excel(writer, sheet_name="Keyword Matches", index=False)
         pd.DataFrame(db.get_keywords(False)).to_excel(writer, sheet_name="NAC Keyword Database Snapshot", index=False)
     return str(path)
 
@@ -63,8 +76,8 @@ def export_potential_nac_pdf(results):
     rows = _potential_rows(results)
     path = _pdf_path("ringkasan_potensi_nac")
     title = "Ringkasan Potensi NAC Perlu Review"
-    columns = ["row_id", "item_per_rab", "matched_category", "final_confidence", "confidence_label"]
-    headers = ["Row", "Nama Material", "Kategori NAC", "Confidence %", "Confidence Level"]
+    columns = ["row_id", "item_per_rab", "matched_category", "correction_percentage_label", "transaction_type", "final_confidence", "confidence_label"]
+    headers = ["Row", "Nama Material", "Kategori NAC", "Prosentase NAC", "Type of Transaction", "Confidence %", "Confidence Level"]
     _write_pdf(path, title, rows, columns, headers)
     return str(path)
 
@@ -73,8 +86,8 @@ def export_all_materials_pdf(results):
     rows = _all_material_rows(results)
     path = _pdf_path("seluruh_material_rab")
     title = "Tabel Seluruh Material RAB"
-    columns = ["row_id", "item_per_rab", "matched_category", "final_confidence", "confidence_label"]
-    headers = ["Row", "Nama Material", "Kategori NAC", "Confidence %", "Confidence Level"]
+    columns = ["row_id", "item_per_rab", "matched_category", "correction_percentage_label", "transaction_type", "final_confidence", "confidence_label"]
+    headers = ["Row", "Nama Material", "Kategori NAC", "Prosentase NAC", "Type of Transaction", "Confidence %", "Confidence Level"]
     _write_pdf(path, title, rows, columns, headers)
     return str(path)
 
@@ -87,6 +100,8 @@ def export_all_materials_excel(results):
         "row_id": "Row",
         "item_per_rab": "Nama Material",
         "matched_category": "Kategori NAC",
+        "correction_percentage_label": "Prosentase NAC",
+        "transaction_type": "Type of Transaction",
         "final_confidence": "Confidence %",
         "confidence_label": "Confidence Level",
     }
@@ -112,7 +127,7 @@ def _all_material_rows(results):
 
 def _normalize_export_rows(frame):
     frame = frame.copy()
-    for col in ["row_id", "item_per_rab", "matched_category", "final_confidence", "confidence_label"]:
+    for col in ["row_id", "item_per_rab", "matched_category", "correction_percentage_label", "transaction_type", "final_confidence", "confidence_label"]:
         if col not in frame.columns:
             frame[col] = ""
     frame["item_per_rab"] = frame["item_per_rab"].fillna(frame.get("item_description", ""))
@@ -141,8 +156,9 @@ def _write_pdf(path, title, rows, columns, headers):
     for row in rows:
         data.append([_pdf_cell(row.get(col, "")) for col in columns])
     if len(data) == 1:
-        data.append(["-", "Tidak ada data", "-", "-", "-"])
-    table = Table(data, colWidths=[45, 330, 130, 80, 120], repeatRows=1)
+        data.append(["-"] + ["Tidak ada data"] + ["-"] * (len(headers) - 2))
+    default_widths = [38, 230, 105, 70, 175, 65, 85]
+    table = Table(data, colWidths=default_widths[: len(headers)], repeatRows=1)
     table.setStyle(
         TableStyle(
             [

@@ -11,6 +11,10 @@ import pandas as pd
 BASE_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = Path(os.environ.get("RAB_NAC_DATA_DIR", BASE_DIR / "data"))
 DB_PATH = Path(os.environ.get("RAB_NAC_DB_PATH", DATA_DIR / "app.db"))
+KEYWORD_PACK_VERSION = "nac_2026_v1"
+KEYWORD_PACK_FILENAME = "nac_2026_keyword_pack.xlsx"
+KEYWORD_PACK_PATH = DATA_DIR / KEYWORD_PACK_FILENAME
+BUNDLED_KEYWORD_PACK_PATH = BASE_DIR / "data" / KEYWORD_PACK_FILENAME
 
 
 def now():
@@ -37,7 +41,9 @@ def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 category TEXT, keyword TEXT NOT NULL, description TEXT, reference TEXT,
                 severity TEXT DEFAULT 'medium', status TEXT DEFAULT 'active',
-                created_by TEXT, created_at TEXT, updated_at TEXT, notes TEXT
+                created_by TEXT, created_at TEXT, updated_at TEXT, notes TEXT,
+                nac_group TEXT, correction_percentage REAL, transaction_type TEXT,
+                gl_account TEXT, gl_account_description TEXT, source_reference TEXT, source_slide TEXT
             );
             CREATE TABLE IF NOT EXISTS nac_synonyms (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -70,80 +76,54 @@ def init_db():
             );
             """
         )
-    seed_db_if_empty()
-    ensure_demo_keywords()
+    migrate_schema()
+    seed_default_settings()
+    ensure_nac_2026_keyword_pack()
     ensure_fast_review_defaults()
     create_templates()
 
 
-def seed_db_if_empty():
+def migrate_schema():
+    keyword_columns = {
+        "nac_group": "TEXT",
+        "correction_percentage": "REAL",
+        "transaction_type": "TEXT",
+        "gl_account": "TEXT",
+        "gl_account_description": "TEXT",
+        "source_reference": "TEXT",
+        "source_slide": "TEXT",
+    }
     with connect() as conn:
-        count = conn.execute("SELECT COUNT(*) FROM nac_keywords").fetchone()[0]
-        if count:
-            return
-        seeds = [
-            ("Rapat/Jamuan", "konsumsi rapat", "Konsumsi kegiatan rapat", "DEMO - validasi PMK/internal diperlukan", "medium"),
-            ("Rapat/Jamuan", "jamuan rapat", "Jamuan kegiatan rapat", "DEMO - validasi PMK/internal diperlukan", "medium"),
-            ("Rapat/Jamuan", "snack meeting", "Snack/coffee break meeting", "DEMO", "medium"),
-            ("Rapat/Jamuan", "coffee break", "Coffee break", "DEMO", "medium"),
-            ("Pegawai", "fasilitas pegawai", "Fasilitas pegawai", "DEMO", "high"),
-            ("Pegawai", "tunjangan pegawai", "Tunjangan pegawai", "DEMO", "high"),
-            ("Pegawai", "uang cuti", "Uang cuti", "DEMO", "high"),
-            ("Pegawai", "rumah dinas pegawai", "Rumah dinas pegawai", "DEMO", "high"),
-            ("Pegawai", "rekreasi pegawai", "Rekreasi pegawai", "DEMO", "high"),
-            ("Representasi", "entertainment", "Entertainment", "DEMO", "high"),
-            ("Denda/Sanksi", "denda", "Denda", "DEMO", "high"),
-            ("Denda/Sanksi", "sanksi", "Sanksi", "DEMO", "high"),
-            ("Pribadi/Hadiah", "biaya pribadi", "Biaya pribadi", "DEMO", "very_high"),
-            ("Pribadi/Hadiah", "hadiah", "Hadiah", "DEMO", "medium"),
-            ("Pribadi/Hadiah", "souvenir", "Souvenir", "DEMO", "medium"),
-            ("Pegawai", "seragam non teknis", "Seragam non teknis", "DEMO", "medium"),
-            ("Representasi", "biaya representasi", "Biaya representasi", "DEMO", "high"),
-        ]
-        for category, keyword, desc, ref, severity in seeds:
-            cur = conn.execute(
-                """INSERT INTO nac_keywords
-                (category, keyword, description, reference, severity, status, created_by, created_at, updated_at, notes)
-                VALUES (?, ?, ?, ?, ?, 'active', 'system_seed', ?, ?, 'Demo seed; wajib divalidasi')""",
-                (category, keyword, desc, ref, severity, now(), now()),
-            )
-            for syn in _default_synonyms(keyword):
-                conn.execute(
-                    "INSERT INTO nac_synonyms (nac_keyword_id, synonym, weight, status, created_at) VALUES (?, ?, 0.9, 'active', ?)",
-                    (cur.lastrowid, syn, now()),
-                )
-        allowable = [
-            "material konstruksi", "jasa instalasi", "jasa pengujian", "inspeksi teknis",
-            "transportasi teknis proyek", "peralatan kerja", "pengujian gardu",
-            "pemeliharaan jaringan", "penggantian material", "commissioning",
-            "mobilisasi alat", "konsumsi bahan bakar", "bahan bakar genset",
-        ]
-        for kw in allowable:
-            conn.execute(
-                "INSERT INTO allowable_keywords (category, keyword, description, status, created_at) VALUES ('Teknis', ?, 'Demo allowable keyword', 'active', ?)",
-                (kw, now()),
-            )
-        conn.execute(
-            "INSERT INTO exceptions (pattern, reason, action, weight_adjustment, status, created_at) VALUES (?, ?, 'lower_confidence', 35, 'active', ?)",
-            ("konsumsi bahan bakar", "Konsumsi dalam konteks bahan bakar, bukan konsumsi rapat/jamuan", now()),
-        )
-        defaults = {
-            "embedding_model": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
-            "enable_semantic": "false",
-            "enable_stemming": "false",
-            "fuzzy_threshold": "78",
-            "semantic_threshold": "60",
-            "exact_weight": "0.25",
-            "synonym_weight": "0.25",
-            "fuzzy_weight": "0.20",
-            "semantic_weight": "0.30",
-            "severity_weight": "0.10",
-            "feedback_weight": "0.10",
-            "allowable_penalty_weight": "0.20",
-            "ocr_mode": "auto",
-        }
-        for k, v in defaults.items():
-            conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (k, v))
+        existing = {row["name"] for row in conn.execute("PRAGMA table_info(nac_keywords)").fetchall()}
+        for column, column_type in keyword_columns.items():
+            if column not in existing:
+                conn.execute(f"ALTER TABLE nac_keywords ADD COLUMN {column} {column_type}")
+
+
+def seed_default_settings():
+    defaults = {
+        "embedding_model": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+        "enable_semantic": "false",
+        "enable_stemming": "false",
+        "fuzzy_threshold": "78",
+        "semantic_threshold": "60",
+        "exact_weight": "0.25",
+        "synonym_weight": "0.25",
+        "fuzzy_weight": "0.20",
+        "semantic_weight": "0.30",
+        "severity_weight": "0.10",
+        "feedback_weight": "0.10",
+        "allowable_penalty_weight": "0.20",
+        "ocr_mode": "auto",
+    }
+    with connect() as conn:
+        for key, value in defaults.items():
+            conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value))
+
+
+def seed_db_if_empty():
+    """Backward-compatible wrapper; production seeding is handled by ensure_nac_2026_keyword_pack."""
+    ensure_nac_2026_keyword_pack()
 
 
 def _default_synonyms(keyword):
@@ -158,45 +138,166 @@ def _default_synonyms(keyword):
 
 
 def ensure_demo_keywords():
-    demo_keywords = [
-        ("Rapat/Jamuan", "konsumsi", "Konsumsi/jamuan umum; demo keyword perlu validasi", "DEMO", "high", ["prasmanan", "makan minum", "minuman", "snack box"]),
-        ("Rapat/Jamuan", "catering", "Catering/jamuan; demo keyword perlu validasi", "DEMO", "high", ["katering", "charge catering"]),
-        ("Rapat/Jamuan", "prasmanan", "Konsumsi prasmanan; demo keyword perlu validasi", "DEMO", "high", ["menu prasmanan"]),
-        ("Rapat/Jamuan", "snack", "Snack/kudapan; demo keyword perlu validasi", "DEMO", "high", ["snack anak", "snack anak2", "snack box", "kudapan"]),
-        ("Rapat/Jamuan", "minuman", "Minuman/konsumsi; demo keyword perlu validasi", "DEMO", "medium", ["es jeruk", "nektar"]),
-        ("Pribadi/Hadiah", "doorprize", "Doorprize/hadiah; demo keyword perlu validasi", "DEMO", "high", ["hadiah quiz", "hadiah quizziz"]),
-        ("Pribadi/Hadiah", "oleh-oleh", "Oleh-oleh/cinderamata; demo keyword perlu validasi", "DEMO", "medium", ["buah tangan", "bawaan"]),
-        ("Pribadi/Hadiah", "cinderamata", "Cinderamata/souvenir; demo keyword perlu validasi", "DEMO", "medium", ["kenang-kenangan"]),
-        ("Representasi", "fee narasumber", "Fee/honor narasumber; demo keyword perlu validasi", "DEMO", "medium", ["honor narasumber", "tambahan fee penceramah"]),
-        ("Pegawai", "baju vip", "Pakaian non-teknis/VIP; demo keyword perlu validasi", "DEMO", "medium", ["seragam vip"]),
-        ("Personel/Operasional", "uang saku", "Uang saku/bantuan personal; demo keyword perlu validasi", "DEMO", "medium", ["bantuan uang saku"]),
-        ("Personel/Operasional", "honorarium", "Honorarium personel; demo keyword perlu validasi", "DEMO", "medium", ["honor", "fee narasumber"]),
-        ("Personel/Operasional", "pulsa petugas", "Pulsa/komunikasi personal; demo keyword perlu validasi", "DEMO", "medium", ["pulsa lapangan", "pulsa operator"]),
-        ("Transportasi/Personel", "bantuan transport eksternal", "Transport/bantuan eksternal; demo keyword perlu validasi", "DEMO", "medium", ["transport eksternal", "bantuan transport"]),
-    ]
+    """Backward-compatible no-op after v1.1.0."""
+    ensure_nac_2026_keyword_pack()
+
+
+def ensure_nac_2026_keyword_pack():
+    settings = get_settings()
+    if settings.get("keyword_pack_version") == KEYWORD_PACK_VERSION:
+        return
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    pack_path = KEYWORD_PACK_PATH if KEYWORD_PACK_PATH.exists() else BUNDLED_KEYWORD_PACK_PATH
+    if not pack_path.exists():
+        return
+
+    keyword_frame = pd.read_excel(pack_path, sheet_name="NAC Keywords").fillna("")
+    synonyms_frame = pd.read_excel(pack_path, sheet_name="Synonyms").fillna("")
+    allowable_frame = pd.read_excel(pack_path, sheet_name="Allowable").fillna("")
+    exceptions_frame = pd.read_excel(pack_path, sheet_name="Exceptions").fillna("")
+
     with connect() as conn:
-        for category, keyword, desc, ref, severity, synonyms in demo_keywords:
-            existing = conn.execute("SELECT id FROM nac_keywords WHERE lower(keyword)=lower(?)", (keyword,)).fetchone()
+        demo_ids = [
+            row["id"]
+            for row in conn.execute(
+                """SELECT id FROM nac_keywords
+                WHERE created_by='system_seed'
+                   OR reference LIKE 'DEMO%'
+                   OR notes LIKE '%Demo seed%'
+                   OR notes LIKE '%demo keyword%'"""
+            ).fetchall()
+        ]
+        if demo_ids:
+            placeholders = ",".join("?" for _ in demo_ids)
+            conn.execute(f"DELETE FROM nac_synonyms WHERE nac_keyword_id IN ({placeholders})", demo_ids)
+            conn.execute(f"DELETE FROM exceptions WHERE nac_keyword_id IN ({placeholders})", demo_ids)
+            conn.execute(f"DELETE FROM nac_keywords WHERE id IN ({placeholders})", demo_ids)
+
+        keyword_id_by_text = {}
+        for _, row in keyword_frame.iterrows():
+            keyword = str(row.get("keyword", "")).strip()
+            if not keyword:
+                continue
+            values = {
+                "category": str(row.get("category", "")).strip(),
+                "description": str(row.get("description", "")).strip(),
+                "reference": str(row.get("reference", "")).strip(),
+                "severity": str(row.get("severity", "medium") or "medium").strip(),
+                "status": str(row.get("status", "active") or "active").strip(),
+                "notes": str(row.get("notes", "")).strip(),
+                "nac_group": str(row.get("nac_group", "")).strip(),
+                "correction_percentage": _float_or_none(row.get("correction_percentage")),
+                "transaction_type": str(row.get("transaction_type", "")).strip(),
+                "gl_account": str(row.get("gl_account", "")).strip(),
+                "gl_account_description": str(row.get("gl_account_description", "")).strip(),
+                "source_reference": str(row.get("source_reference", "")).strip(),
+                "source_slide": str(row.get("source_slide", "")).strip(),
+            }
+            existing = conn.execute("SELECT * FROM nac_keywords WHERE lower(keyword)=lower(?) ORDER BY id LIMIT 1", (keyword,)).fetchone()
             if existing:
                 keyword_id = existing["id"]
+                if existing["created_by"] == "system_seed":
+                    conn.execute(
+                        """UPDATE nac_keywords
+                        SET category=?, description=?, reference=?, severity=?, status=?, notes=?,
+                            nac_group=?, correction_percentage=?, transaction_type=?, gl_account=?,
+                            gl_account_description=?, source_reference=?, source_slide=?, updated_at=?
+                        WHERE id=?""",
+                        (
+                            values["category"], values["description"], values["reference"], values["severity"],
+                            values["status"], values["notes"], values["nac_group"], values["correction_percentage"],
+                            values["transaction_type"], values["gl_account"], values["gl_account_description"],
+                            values["source_reference"], values["source_slide"], now(), keyword_id,
+                        ),
+                    )
             else:
                 cur = conn.execute(
                     """INSERT INTO nac_keywords
-                    (category, keyword, description, reference, severity, status, created_by, created_at, updated_at, notes)
-                    VALUES (?, ?, ?, ?, ?, 'active', 'system_seed', ?, ?, 'Demo seed; wajib divalidasi')""",
-                    (category, keyword, desc, ref, severity, now(), now()),
+                    (category, keyword, description, reference, severity, status, created_by, created_at, updated_at, notes,
+                     nac_group, correction_percentage, transaction_type, gl_account, gl_account_description, source_reference, source_slide)
+                    VALUES (?, ?, ?, ?, ?, ?, 'system_seed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        values["category"], keyword, values["description"], values["reference"], values["severity"],
+                        values["status"], now(), now(), values["notes"], values["nac_group"],
+                        values["correction_percentage"], values["transaction_type"], values["gl_account"],
+                        values["gl_account_description"], values["source_reference"], values["source_slide"],
+                    ),
                 )
                 keyword_id = cur.lastrowid
-            for synonym in synonyms:
-                exists = conn.execute(
-                    "SELECT id FROM nac_synonyms WHERE nac_keyword_id=? AND lower(synonym)=lower(?)",
-                    (keyword_id, synonym),
-                ).fetchone()
-                if not exists:
-                    conn.execute(
-                        "INSERT INTO nac_synonyms (nac_keyword_id, synonym, weight, status, created_at) VALUES (?, ?, 0.9, 'active', ?)",
-                        (keyword_id, synonym, now()),
-                    )
+            keyword_id_by_text[keyword.lower()] = keyword_id
+
+        for _, row in synonyms_frame.iterrows():
+            keyword = str(row.get("keyword", "")).strip().lower()
+            synonym = str(row.get("synonym", "")).strip()
+            keyword_id = keyword_id_by_text.get(keyword)
+            if not keyword_id or not synonym:
+                continue
+            exists = conn.execute(
+                "SELECT id FROM nac_synonyms WHERE nac_keyword_id=? AND lower(synonym)=lower(?) LIMIT 1",
+                (keyword_id, synonym),
+            ).fetchone()
+            if not exists:
+                conn.execute(
+                    "INSERT INTO nac_synonyms (nac_keyword_id, synonym, weight, status, created_at) VALUES (?, ?, ?, ?, ?)",
+                    (
+                        keyword_id,
+                        synonym,
+                        _float_or_none(row.get("weight")) or 0.9,
+                        str(row.get("status", "active") or "active"),
+                        now(),
+                    ),
+                )
+
+        conn.execute("DELETE FROM allowable_keywords WHERE description LIKE 'Demo allowable keyword%'")
+        for _, row in allowable_frame.iterrows():
+            keyword = str(row.get("keyword", "")).strip()
+            if not keyword:
+                continue
+            exists = conn.execute("SELECT id FROM allowable_keywords WHERE lower(keyword)=lower(?) LIMIT 1", (keyword,)).fetchone()
+            if not exists:
+                conn.execute(
+                    "INSERT INTO allowable_keywords (category, keyword, description, status, created_at) VALUES (?, ?, ?, ?, ?)",
+                    (
+                        str(row.get("category", "") or "Teknis"),
+                        keyword,
+                        str(row.get("description", "")).strip(),
+                        str(row.get("status", "active") or "active"),
+                        now(),
+                    ),
+                )
+
+        for _, row in exceptions_frame.iterrows():
+            pattern = str(row.get("pattern", "")).strip()
+            if not pattern:
+                continue
+            keyword = str(row.get("keyword", "")).strip().lower()
+            keyword_id = keyword_id_by_text.get(keyword)
+            exists = conn.execute("SELECT id FROM exceptions WHERE lower(pattern)=lower(?) LIMIT 1", (pattern,)).fetchone()
+            if not exists:
+                conn.execute(
+                    """INSERT INTO exceptions
+                    (nac_keyword_id, pattern, reason, action, weight_adjustment, status, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        keyword_id,
+                        pattern,
+                        str(row.get("reason", "")).strip(),
+                        str(row.get("action", "lower_confidence") or "lower_confidence"),
+                        _float_or_none(row.get("weight_adjustment")) or 25,
+                        str(row.get("status", "active") or "active"),
+                        now(),
+                    ),
+                )
+        conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('keyword_pack_version', ?)", (KEYWORD_PACK_VERSION,))
+
+
+def _float_or_none(value):
+    if value in (None, ""):
+        return None
+    try:
+        return float(str(value).replace("%", "").strip())
+    except (TypeError, ValueError):
+        return None
 
 
 def ensure_fast_review_defaults():
@@ -237,9 +338,11 @@ def get_keyword_by_text(keyword):
 
 
 def get_synonyms(active_only=True):
-    clause = "WHERE s.status='active'" if active_only else ""
+    clause = "WHERE s.status='active' AND k.status='active'" if active_only else ""
     return rows(
-        f"""SELECT s.*, k.keyword AS parent_keyword, k.category, k.severity
+        f"""SELECT s.*, k.keyword AS parent_keyword, k.category, k.severity,
+        k.nac_group, k.correction_percentage, k.transaction_type, k.gl_account,
+        k.gl_account_description, k.source_reference, k.source_slide
         FROM nac_synonyms s LEFT JOIN nac_keywords k ON k.id=s.nac_keyword_id {clause}
         ORDER BY s.synonym"""
     )
@@ -255,11 +358,32 @@ def get_exceptions(active_only=True):
     return rows(f"SELECT * FROM exceptions {clause} ORDER BY pattern")
 
 
-def add_keyword(category, keyword, description="", reference="", severity="medium", status="active", notes="", created_by="user"):
+def add_keyword(
+    category,
+    keyword,
+    description="",
+    reference="",
+    severity="medium",
+    status="active",
+    notes="",
+    created_by="user",
+    nac_group="",
+    correction_percentage=None,
+    transaction_type="",
+    gl_account="",
+    gl_account_description="",
+    source_reference="",
+    source_slide="",
+):
     return execute(
-        """INSERT INTO nac_keywords (category, keyword, description, reference, severity, status, created_by, created_at, updated_at, notes)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (category, keyword, description, reference, severity, status, created_by, now(), now(), notes),
+        """INSERT INTO nac_keywords
+        (category, keyword, description, reference, severity, status, created_by, created_at, updated_at, notes,
+         nac_group, correction_percentage, transaction_type, gl_account, gl_account_description, source_reference, source_slide)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            category, keyword, description, reference, severity, status, created_by, now(), now(), notes,
+            nac_group, correction_percentage, transaction_type, gl_account, gl_account_description, source_reference, source_slide,
+        ),
     )
 
 
@@ -351,8 +475,12 @@ def create_templates():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     template = DATA_DIR / "keyword_import_template.xlsx"
     seed_xlsx = DATA_DIR / "seed_keywords.xlsx"
-    cols = ["category", "keyword", "synonyms", "description", "reference", "severity", "status", "notes"]
+    cols = [
+        "category", "keyword", "synonyms", "description", "reference", "severity", "status", "notes",
+        "nac_group", "correction_percentage", "transaction_type", "gl_account",
+        "gl_account_description", "source_reference", "source_slide",
+    ]
     if not template.exists():
         pd.DataFrame(columns=cols).to_excel(template, index=False)
     if not seed_xlsx.exists():
-        pd.DataFrame(get_keywords(False))[cols[:2] + ["description", "reference", "severity", "status", "notes"]].to_excel(seed_xlsx, index=False)
+        pd.DataFrame(get_keywords(False)).to_excel(seed_xlsx, index=False)

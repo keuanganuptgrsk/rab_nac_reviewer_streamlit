@@ -2,14 +2,15 @@
 
 RAB NAC Reviewer adalah aplikasi Streamlit untuk membantu reviewer finance melakukan review awal dokumen RAB dan mendeteksi potensi NAC. Aplikasi ini tidak menggantikan keputusan reviewer; hasil deteksi wajib divalidasi terhadap PMK, kebijakan internal, dan konteks pekerjaan.
 
-Versi aktif: `v1.0.1 - Bulk Keyword Management`.
+Versi aktif: `v1.1.0 - NAC 2026 Keyword Pack`.
 
 ## Fitur
 
 - Upload RAB Excel, CSV, PDF digital, PDF scan, dan gambar.
 - Parser Excel RAB Indonesia dengan dukungan judul pekerjaan, section, item, volume, satuan, harga satuan, dan total.
 - Deteksi NAC hybrid: exact keyword, sinonim, fuzzy matching, semantic matching opsional, allowable competitor, exception, dan feedback historis.
-- Database SQLite lokal untuk keyword, sinonim, allowable keyword, exception, settings, dan feedback.
+- Database SQLite lokal untuk keyword NAC 2026 Kategori A/B, sinonim, allowable keyword, exception, settings, dan feedback.
+- Output review menampilkan `Prosentase NAC` dan `Type of Transaction` dari pack keyword.
 - Export PDF ringkasan potensi NAC, PDF seluruh material, Excel seluruh material, dan database keyword.
 - Backup dan restore SQLite dari UI.
 - Bulk nonaktifkan, restore, dan hapus permanen keyword NAC dari tabel checkbox.
@@ -23,9 +24,19 @@ Versi aktif: `v1.0.1 - Bulk Keyword Management`.
 4. Cek pesan deteksi kolom dan preview data.
 5. Tekan `Run NAC Review`.
 6. Baca tabel `Temuan prioritas` untuk item confidence `Sedang`, `Tinggi`, dan `Sangat tinggi`.
-7. Buka `Tabel seluruh item RAB` untuk melihat semua material, termasuk confidence rendah.
-8. Isi `Feedback reviewer` bila ada false positive, false negative, atau sinonim baru.
-9. Gunakan bagian `Export hasil` untuk membuat PDF atau Excel dokumentasi review.
+7. Cek `Prosentase NAC` dan `Type of Transaction` untuk melihat proporsi koreksi dan klasifikasi transaksi.
+8. Buka `Tabel seluruh item RAB` untuk melihat semua material, termasuk confidence rendah.
+9. Isi `Feedback reviewer` bila ada false positive, false negative, atau sinonim baru.
+10. Gunakan bagian `Export hasil` untuk membuat PDF atau Excel dokumentasi review.
+
+## Keyword Pack NAC 2026
+
+- Seed produksi berada di `data/nac_2026_keyword_pack.xlsx`.
+- Kategori A memakai rujukan PMK 20 Tahun 2025 dan slide internal NAC 2026.
+- Kategori B memakai daftar transaksi NAC Kategori B pada PPT, termasuk `Prosentase` dan `Type of Transaction`.
+- Saat app start, database lama yang masih berisi seed demo sistem akan otomatis dimigrasikan ke pack `nac_2026_v1`.
+- Keyword yang ditambahkan user tetap dipertahankan; lakukan backup SQLite sebelum deploy besar.
+- Sumber regulasi: [JDIH Kemenkeu PMK 20 Tahun 2025](https://jdih.kemenkeu.go.id/dok/pmk-20-tahun-2025), [PDF resmi PMK](https://jdih.kemenkeu.go.id/download/e0fbc6a3-ecfb-4c4f-8f87-23854b1c01e6/2025pmkeuangan020.pdf), dan [Database Peraturan BPK](https://peraturan.bpk.go.id/Details/316100/pmk-no-20-tahun-2025).
 
 ## Deploy Gratis ke Streamlit Community Cloud
 
@@ -72,6 +83,7 @@ python -m pytest
 
 - Database default dibuat otomatis di `data/app.db`.
 - File `data/app.db` tidak dikomit ke GitHub.
+- Sebelum migrasi keyword, klik `Buat Backup Database` agar perubahan keyword lokal/cloud bisa dipulihkan.
 - Untuk mengelola banyak keyword, buka `Database NAC`, centang beberapa baris pada tabel, lalu pilih `Nonaktifkan Selected`.
 - Untuk restore, buka `Keyword nonaktif`, centang keyword yang ingin dikembalikan, lalu pilih `Restore Selected`.
 - Untuk hapus permanen, buka panel `Hapus permanen selected`, ketik `HAPUS PERMANEN`, lalu klik tombol hapus. Gunakan hanya bila data memang tidak perlu jejak keyword/sinonim/exception.
@@ -107,13 +119,13 @@ Lalu buka `Settings` dan ubah `Deteksi Sinonim/Parafrasa Otomatis` ke `Aktif`.
 
 ## Versioning dan Rollback
 
-Rilis ini ditandai sebagai tag git `v1.0.1`.
+Rilis ini ditandai sebagai tag git `v1.1.0`.
 
 Rollback lokal:
 
 ```powershell
 git fetch --tags
-git checkout v1.0.1
+git checkout v1.1.0
 ```
 
 Rollback deploy Streamlit Cloud:

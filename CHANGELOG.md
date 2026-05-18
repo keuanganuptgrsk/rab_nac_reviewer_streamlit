@@ -2,6 +2,13 @@
 
 Semua penambahan fitur harus dicatat dengan format: versi, judul, tanggal, dan keterangan.
 
+## v1.1.0 - NAC 2026 Keyword Pack - 2026-05-18
+
+- Mengganti seed keyword demo dengan keyword NAC 2026 Kategori A dan Kategori B.
+- Menambahkan metadata `Prosentase NAC`, `Type of Transaction`, G/L account, rujukan sumber, dan slide sumber pada keyword pack.
+- Menampilkan `Prosentase NAC` dan `Type of Transaction` di UI review, Analisa Redaksi, PDF, Excel, dan export database keyword.
+- Menambahkan allowable/exception untuk konteks teknis seperti rumah dinas operator, pakaian dinas petugas operasi, dan konsumsi bahan bakar.
+
 ## v1.0.1 - Bulk Keyword Management - 2026-05-11
 
 - Mengganti hapus keyword berbasis dropdown menjadi tabel checkbox bulk action.

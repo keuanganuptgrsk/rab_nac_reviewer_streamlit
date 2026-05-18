@@ -274,6 +274,8 @@ def review_summary_dataframe(results: list[dict[str, Any]] | None) -> pd.DataFra
                 "Item per RAB",
                 "Kategori",
                 "Keyword",
+                "Prosentase NAC",
+                "Type of Transaction",
                 "Tipe Deteksi",
                 "Confidence",
                 "Confidence Level",
@@ -291,6 +293,8 @@ def review_summary_dataframe(results: list[dict[str, Any]] | None) -> pd.DataFra
         "item_per_rab",
         "matched_category",
         "matched_keyword",
+        "correction_percentage_label",
+        "transaction_type",
         "match_type",
         "final_confidence",
         "confidence_label",
@@ -310,6 +314,8 @@ def review_summary_dataframe(results: list[dict[str, Any]] | None) -> pd.DataFra
             "item_per_rab": "Item per RAB",
             "matched_category": "Kategori",
             "matched_keyword": "Keyword",
+            "correction_percentage_label": "Prosentase NAC",
+            "transaction_type": "Type of Transaction",
             "match_type": "Tipe Deteksi",
             "final_confidence": "Confidence",
             "confidence_label": "Confidence Level",
@@ -321,11 +327,16 @@ def review_summary_dataframe(results: list[dict[str, Any]] | None) -> pd.DataFra
 
 def all_materials_dataframe(results: list[dict[str, Any]] | None) -> pd.DataFrame:
     frame = pd.DataFrame(results or [])
-    columns = ["row_id", "item_per_rab", "matched_category", "final_confidence", "confidence_label"]
+    columns = [
+        "row_id", "item_per_rab", "matched_category", "correction_percentage_label",
+        "transaction_type", "final_confidence", "confidence_label",
+    ]
     labels = {
         "row_id": "Row",
         "item_per_rab": "Item RAB",
         "matched_category": "Kategori NAC",
+        "correction_percentage_label": "Prosentase NAC",
+        "transaction_type": "Type of Transaction",
         "final_confidence": "Confidence %",
         "confidence_label": "Confidence Level",
     }
@@ -361,7 +372,11 @@ def filtered_results(
         frame = frame[frame["recommended_action"].astype(str).str.contains("Review Manual", case=False, na=False)]
     query_l = str(query or "").strip().lower()
     if query_l:
-        haystack = frame[["item_per_rab", "original_text", "matched_keyword", "matched_category"]].fillna("").astype(str).agg(" ".join, axis=1)
+        search_columns = ["item_per_rab", "original_text", "matched_keyword", "matched_category", "transaction_type"]
+        for col in search_columns:
+            if col not in frame.columns:
+                frame[col] = ""
+        haystack = frame[search_columns].fillna("").astype(str).agg(" ".join, axis=1)
         frame = frame[haystack.str.lower().str.contains(re.escape(query_l), na=False)]
     return frame
 
