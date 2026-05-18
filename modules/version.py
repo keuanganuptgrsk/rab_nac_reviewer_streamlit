@@ -1,5 +1,5 @@
-APP_VERSION = "1.1.0"
-APP_RELEASE_TITLE = "NAC 2026 Keyword Pack"
+APP_VERSION = "1.2.0"
+APP_RELEASE_TITLE = "Indonesian Semantic Matching Lite"
 APP_RELEASE_NOTES = (
     "Review potensi NAC dengan mudah~"
 )

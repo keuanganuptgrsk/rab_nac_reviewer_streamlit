@@ -2,13 +2,13 @@
 
 RAB NAC Reviewer adalah aplikasi Streamlit untuk membantu reviewer finance melakukan review awal dokumen RAB dan mendeteksi potensi NAC. Aplikasi ini tidak menggantikan keputusan reviewer; hasil deteksi wajib divalidasi terhadap PMK, kebijakan internal, dan konteks pekerjaan.
 
-Versi aktif: `v1.1.0 - NAC 2026 Keyword Pack`.
+Versi aktif: `v1.2.0 - Indonesian Semantic Matching Lite`.
 
 ## Fitur
 
 - Upload RAB Excel, CSV, PDF digital, PDF scan, dan gambar.
 - Parser Excel RAB Indonesia dengan dukungan judul pekerjaan, section, item, volume, satuan, harga satuan, dan total.
-- Deteksi NAC hybrid: exact keyword, sinonim, fuzzy matching, semantic matching opsional, allowable competitor, exception, dan feedback historis.
+- Deteksi NAC hybrid: exact keyword, sinonim, fuzzy matching, semantic matching Bahasa Indonesia opsional, allowable competitor, exception, dan feedback historis.
 - Database SQLite lokal untuk keyword NAC 2026 Kategori A/B, sinonim, allowable keyword, exception, settings, dan feedback.
 - Output review menampilkan `Prosentase NAC` dan `Type of Transaction` dari pack keyword.
 - Export PDF ringkasan potensi NAC, PDF seluruh material, Excel seluruh material, dan database keyword.
@@ -107,21 +107,27 @@ tesseract-ocr-ind
 
 Untuk Windows lokal, install Tesseract OCR dan pastikan command `tesseract` tersedia di `PATH`.
 
-## Semantic Matching
+## Semantic Bahasa Indonesia
 
-Semantic matching default `Nonaktif` karena `sentence-transformers` berat untuk hosting gratis. Jika ingin mengaktifkan lokal, install manual:
+Semantic matching default `Nonaktif` agar app tetap ringan saat pertama dibuka. Rilis `v1.2.0` sudah memasang `sentence-transformers` di `requirements.txt`, sehingga Streamlit Community Cloud dapat menjalankan semantic mode tanpa API eksternal.
 
-```powershell
-python -m pip install sentence-transformers scikit-learn
-```
+Model default: `LazarusNLP/all-indo-e5-small-v4`.
 
-Lalu buka `Settings` dan ubah `Deteksi Sinonim/Parafrasa Otomatis` ke `Aktif`.
+Cara mengaktifkan:
 
-Roadmap semantic Bahasa Indonesia untuk sinonim/parafrasa NAC berada di [docs/semantic_similarity_indonesia_plan.md](docs/semantic_similarity_indonesia_plan.md). Rekomendasi default berikutnya adalah model Hugging Face `LazarusNLP/all-indo-e5-small-v4` dengan mode `semantic lite opt-in`: model dan index siap dipakai, tetapi tetap bisa dimatikan agar Streamlit Community Cloud gratis tidak berat saat cold start.
+1. Buka `Settings`.
+2. Pada `Deteksi Sinonim/Parafrasa Otomatis`, pilih `Aktif`.
+3. Pilih model semantic. Rekomendasi Cloud: `LazarusNLP/all-indo-e5-small-v4`.
+4. Klik `Simpan Settings`.
+5. Jalankan review seperti biasa.
+
+First run di Streamlit Cloud bisa lebih lama karena model Hugging Face perlu diunduh dan dimuat. Jika Cloud terasa lambat atau muncul resource limit, kembali ke `Settings` dan pilih `Nonaktif`; app otomatis kembali ke lexical mode: exact keyword, sinonim manual, fuzzy, allowable, exception, dan feedback.
+
+Roadmap dan catatan teknis semantic berada di [docs/semantic_similarity_indonesia_plan.md](docs/semantic_similarity_indonesia_plan.md).
 
 ## Versioning dan Rollback
 
-Rilis ini ditandai sebagai tag git `v1.1.0`.
+Rilis ini ditandai sebagai tag git `v1.2.0`.
 
 Rollback lokal:
 

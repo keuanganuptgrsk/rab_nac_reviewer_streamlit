@@ -279,6 +279,8 @@ def redaction_page() -> None:
     keyword = result.get("matched_keyword") or "-"
     percentage = result.get("correction_percentage_label") or "-"
     transaction_type = result.get("transaction_type") or "-"
+    semantic_candidate = result.get("semantic_candidate_text") or "-"
+    semantic_reason = result.get("semantic_reason") or ""
     st.markdown(
         f"""
 <div class="hero-panel">
@@ -290,12 +292,15 @@ def redaction_page() -> None:
   <div class="hero-panel-copy"><strong>Keyword:</strong> {html.escape(keyword)}</div>
   <div class="hero-panel-copy"><strong>Prosentase NAC:</strong> {html.escape(percentage)}</div>
   <div class="hero-panel-copy"><strong>Type of Transaction:</strong> {html.escape(transaction_type)}</div>
+  <div class="hero-panel-copy"><strong>Kandidat Semantic:</strong> {html.escape(semantic_candidate)}</div>
 </div>
 """,
         unsafe_allow_html=True,
     )
     st.progress(min(max(score / 100, 0), 1))
     ui.status_note(result.get("explanation", ""))
+    if semantic_reason:
+        st.caption(f"Semantic audit: {semantic_reason}")
     st.markdown("Saran klarifikasi")
     st.info(result.get("redaction_suggestion") or "Tidak ada saran khusus.")
 
@@ -531,26 +536,64 @@ def settings_page() -> None:
     semantic_available = review_flow.semantic_package_available()
     semantic_default = "Aktif" if settings.get("enable_semantic", "false") == "true" else "Nonaktif"
     ocr_default = "auto" if settings.get("ocr_mode", "auto") != "disabled" else "disabled"
+    model_options = review_flow.SEMANTIC_MODEL_OPTIONS
+    current_model = settings.get("embedding_model") or "LazarusNLP/all-indo-e5-small-v4"
+    label_by_model = {value: label for label, value in model_options.items()}
+    model_labels = list(model_options)
+    current_model_label = label_by_model.get(current_model, model_labels[0])
 
     with st.form("settings_form"):
-        c1, c2, c3 = st.columns(3)
+        c1, c2, c3, c4 = st.columns([1, 1, 1, 1.5])
         with c1:
             review_mode = st.radio("Mode Review", ["Ketat", "Seimbang", "Lebih sensitif"], index=["Ketat", "Seimbang", "Lebih sensitif"].index(review_mode_default))
         with c2:
             semantic_mode = st.radio("Deteksi Sinonim/Parafrasa Otomatis", ["Nonaktif", "Aktif"], index=["Nonaktif", "Aktif"].index(semantic_default))
         with c3:
             ocr_mode = st.radio("OCR PDF Scan/Gambar", ["auto", "disabled"], index=["auto", "disabled"].index(ocr_default))
+        with c4:
+            model_label = st.selectbox("Model Semantic", model_labels, index=model_labels.index(current_model_label))
         submitted = st.form_submit_button("Simpan Settings", type="primary")
     if submitted:
-        st.success(review_flow.save_simple_settings(review_mode, semantic_mode, ocr_mode))
+        st.success(review_flow.save_simple_settings(review_mode, semantic_mode, ocr_mode, model_options[model_label]))
     if semantic_mode == "Aktif" and not semantic_available:
         st.warning("Paket sentence-transformers belum terpasang. Semantic matching akan fallback tanpa menghentikan review.")
+
+    ui.section_label("Semantic Bahasa Indonesia")
+    overview = review_flow.semantic_runtime_overview(model_options.get(model_label, current_model))
+    st.dataframe(
+        pd.DataFrame(
+            [
+                {"Status": "Package", "Nilai": "Tersedia" if overview["package_available"] else "Belum terpasang"},
+                {"Status": "Model aktif", "Nilai": overview["model"]},
+                {"Status": "Status model", "Nilai": overview["model_status"]},
+                {"Status": "Kandidat index", "Nilai": overview["candidate_count"]},
+                {"Status": "Cache index", "Nilai": overview["cached_index_count"]},
+            ]
+        ),
+        width="stretch",
+        hide_index=True,
+        height=215,
+    )
+    st.caption(
+        "Semantic diproses lokal di runtime Streamlit tanpa API eksternal. First run di Cloud dapat lebih lama karena model Hugging Face perlu diunduh dan dimuat."
+    )
+    c_sem1, c_sem2 = st.columns([1, 2])
+    with c_sem1:
+        if st.button("Rebuild Semantic Index", width="stretch"):
+            review_flow.clear_semantic_cache()
+            st.success("Cache semantic dibersihkan. Index akan dibangun ulang pada review berikutnya.")
+            st.rerun()
+    with c_sem2:
+        st.caption(
+            f"Signature index aktif: {overview['signature']} | Keyword aktif: {overview['active_keyword_count']} | "
+            f"Sinonim aktif: {overview['active_synonym_count']} | Feedback Correct NAC: {overview['positive_feedback_count']}"
+        )
 
     with st.expander("Versioning dan rollback", expanded=True):
         st.markdown(version_banner())
         st.markdown(
             """
-Rilis ini memakai tag git `v1.1.0`. Untuk rollback lokal, gunakan tag stabil dari GitHub atau jalankan `git checkout v1.0.1` pada salinan repo. Untuk Streamlit Cloud, deploy ulang branch atau tag yang ingin dipakai.
+Rilis ini memakai tag git `v1.2.0`. Untuk rollback lokal, gunakan tag stabil dari GitHub atau jalankan `git checkout v1.1.0` pada salinan repo. Untuk Streamlit Cloud, deploy ulang branch atau tag yang ingin dipakai.
 """
         )
 

@@ -2,10 +2,14 @@
 
 Semua penambahan fitur harus dicatat dengan format: versi, judul, tanggal, dan keterangan.
 
-## Unreleased
+## v1.2.0 - Indonesian Semantic Matching Lite - 2026-05-18
 
-- Menambahkan rencana upgrade deteksi sinonim dan parafrasa Bahasa Indonesia berbasis semantic similarity Hugging Face yang tetap realistis untuk Streamlit Community Cloud gratis.
-- Mendokumentasikan rekomendasi model `LazarusNLP/all-indo-e5-small-v4`, fallback multilingual, batasan resource cloud gratis, strategi cache, scoring hybrid, fallback lexical, dan test plan untuk rilis `v1.2.0`.
+- Menambahkan semantic similarity Bahasa Indonesia berbasis Hugging Face untuk mendeteksi sinonim dan parafrasa NAC.
+- Menggunakan model default `LazarusNLP/all-indo-e5-small-v4` dengan fallback lexical bila paket/model gagal dimuat.
+- Menambahkan konteks embedding dari keyword, sinonim, metadata transaksi, G/L description, notes, dan feedback `Correct NAC`.
+- Menambahkan output audit semantic: kandidat semantic, sumber kandidat, alasan semantic, dan model yang dipakai.
+- Menambahkan panel `Semantic Bahasa Indonesia` di Settings untuk memilih model, melihat status package/cache, dan rebuild index.
+- Menambahkan `sentence-transformers` ke dependency Cloud agar semantic bisa diaktifkan di Streamlit Community Cloud.
 
 ## v1.1.0 - NAC 2026 Keyword Pack - 2026-05-18
 

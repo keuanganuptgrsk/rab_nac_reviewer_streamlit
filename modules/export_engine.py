@@ -21,6 +21,7 @@ def export_review_excel(results):
             "nac_group", "correction_percentage", "correction_percentage_label", "transaction_type",
             "gl_account", "gl_account_description",
             "fuzzy_score", "semantic_score", "allowable_score", "final_confidence", "confidence_label",
+            "semantic_candidate_text", "semantic_candidate_source", "semantic_reason", "semantic_model",
             "explanation", "recommended_action", "redaction_suggestion", "suggested_synonym_candidate",
             "suggested_synonym_for_keyword", "synonym_suggestion_confidence", "synonym_suggestion_reason",
             "user_feedback", "reviewer_notes",
@@ -29,6 +30,7 @@ def export_review_excel(results):
         "row_id", "redaction_suggestion", "recommended_action", "matched_keyword", "matched_category",
         "nac_group", "correction_percentage_label", "transaction_type", "gl_account",
         "gl_account_description", "match_type", "fuzzy_score", "semantic_score",
+        "semantic_candidate_text", "semantic_candidate_source", "semantic_reason", "semantic_model",
     ]
     for column in required_columns:
         if column not in findings.columns:
@@ -37,11 +39,12 @@ def export_review_excel(results):
     with pd.ExcelWriter(path, engine="xlsxwriter") as writer:
         summary.to_excel(writer, sheet_name="Summary", index=False)
         findings.to_excel(writer, sheet_name="Findings", index=False)
-        findings[["row_id", "redaction_suggestion", "recommended_action", "correction_percentage_label", "transaction_type"]].to_excel(writer, sheet_name="Suggestions", index=False)
+        findings[["row_id", "redaction_suggestion", "recommended_action", "correction_percentage_label", "transaction_type", "semantic_reason"]].to_excel(writer, sheet_name="Suggestions", index=False)
         pd.DataFrame(db.get_feedback()).to_excel(writer, sheet_name="Feedback Log", index=False)
         findings[[
             "row_id", "matched_keyword", "matched_category", "nac_group", "correction_percentage_label",
             "transaction_type", "gl_account", "gl_account_description", "match_type", "fuzzy_score", "semantic_score",
+            "semantic_candidate_text", "semantic_candidate_source", "semantic_reason", "semantic_model",
         ]].to_excel(writer, sheet_name="Keyword Matches", index=False)
         pd.DataFrame(db.get_keywords(False)).to_excel(writer, sheet_name="NAC Keyword Database Snapshot", index=False)
     return str(path)
@@ -76,8 +79,8 @@ def export_potential_nac_pdf(results):
     rows = _potential_rows(results)
     path = _pdf_path("ringkasan_potensi_nac")
     title = "Ringkasan Potensi NAC Perlu Review"
-    columns = ["row_id", "item_per_rab", "matched_category", "correction_percentage_label", "transaction_type", "final_confidence", "confidence_label"]
-    headers = ["Row", "Nama Material", "Kategori NAC", "Prosentase NAC", "Type of Transaction", "Confidence %", "Confidence Level"]
+    columns = ["row_id", "item_per_rab", "matched_category", "correction_percentage_label", "transaction_type", "semantic_audit", "final_confidence", "confidence_label"]
+    headers = ["Row", "Nama Material", "Kategori NAC", "Prosentase NAC", "Type of Transaction", "Semantic Audit", "Confidence %", "Confidence Level"]
     _write_pdf(path, title, rows, columns, headers)
     return str(path)
 
@@ -86,8 +89,8 @@ def export_all_materials_pdf(results):
     rows = _all_material_rows(results)
     path = _pdf_path("seluruh_material_rab")
     title = "Tabel Seluruh Material RAB"
-    columns = ["row_id", "item_per_rab", "matched_category", "correction_percentage_label", "transaction_type", "final_confidence", "confidence_label"]
-    headers = ["Row", "Nama Material", "Kategori NAC", "Prosentase NAC", "Type of Transaction", "Confidence %", "Confidence Level"]
+    columns = ["row_id", "item_per_rab", "matched_category", "correction_percentage_label", "transaction_type", "semantic_audit", "final_confidence", "confidence_label"]
+    headers = ["Row", "Nama Material", "Kategori NAC", "Prosentase NAC", "Type of Transaction", "Semantic Audit", "Confidence %", "Confidence Level"]
     _write_pdf(path, title, rows, columns, headers)
     return str(path)
 
@@ -102,6 +105,7 @@ def export_all_materials_excel(results):
         "matched_category": "Kategori NAC",
         "correction_percentage_label": "Prosentase NAC",
         "transaction_type": "Type of Transaction",
+        "semantic_audit": "Semantic Audit",
         "final_confidence": "Confidence %",
         "confidence_label": "Confidence Level",
     }
@@ -127,11 +131,15 @@ def _all_material_rows(results):
 
 def _normalize_export_rows(frame):
     frame = frame.copy()
-    for col in ["row_id", "item_per_rab", "matched_category", "correction_percentage_label", "transaction_type", "final_confidence", "confidence_label"]:
+    for col in [
+        "row_id", "item_per_rab", "matched_category", "correction_percentage_label", "transaction_type",
+        "semantic_candidate_text", "semantic_reason", "semantic_model", "final_confidence", "confidence_label",
+    ]:
         if col not in frame.columns:
             frame[col] = ""
     frame["item_per_rab"] = frame["item_per_rab"].fillna(frame.get("item_description", ""))
     frame["matched_category"] = frame["matched_category"].replace("", "-").fillna("-")
+    frame["semantic_audit"] = frame.apply(_semantic_audit, axis=1)
     frame["final_confidence"] = pd.to_numeric(frame["final_confidence"], errors="coerce").fillna(0).round(2)
     frame["_row_sort"] = pd.to_numeric(frame["row_id"], errors="coerce")
     frame = frame.sort_values("_row_sort", na_position="last")
@@ -157,7 +165,7 @@ def _write_pdf(path, title, rows, columns, headers):
         data.append([_pdf_cell(row.get(col, "")) for col in columns])
     if len(data) == 1:
         data.append(["-"] + ["Tidak ada data"] + ["-"] * (len(headers) - 2))
-    default_widths = [38, 230, 105, 70, 175, 65, 85]
+    default_widths = [34, 175, 90, 58, 130, 175, 58, 75]
     table = Table(data, colWidths=default_widths[: len(headers)], repeatRows=1)
     table.setStyle(
         TableStyle(
@@ -179,3 +187,13 @@ def _write_pdf(path, title, rows, columns, headers):
 def _pdf_cell(value):
     text = str(value if value is not None else "")
     return text[:180]
+
+
+def _semantic_audit(row):
+    candidate = str(row.get("semantic_candidate_text") or "").strip()
+    reason = str(row.get("semantic_reason") or "").strip()
+    if not candidate and not reason:
+        return "-"
+    if candidate and reason:
+        return f"{candidate}: {reason}"
+    return candidate or reason

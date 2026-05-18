@@ -15,6 +15,8 @@ KEYWORD_PACK_VERSION = "nac_2026_v1"
 KEYWORD_PACK_FILENAME = "nac_2026_keyword_pack.xlsx"
 KEYWORD_PACK_PATH = DATA_DIR / KEYWORD_PACK_FILENAME
 BUNDLED_KEYWORD_PACK_PATH = BASE_DIR / "data" / KEYWORD_PACK_FILENAME
+DEFAULT_EMBEDDING_MODEL = "LazarusNLP/all-indo-e5-small-v4"
+LEGACY_EMBEDDING_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 
 
 def now():
@@ -102,7 +104,7 @@ def migrate_schema():
 
 def seed_default_settings():
     defaults = {
-        "embedding_model": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+        "embedding_model": DEFAULT_EMBEDDING_MODEL,
         "enable_semantic": "false",
         "enable_stemming": "false",
         "fuzzy_threshold": "78",
@@ -302,6 +304,8 @@ def _float_or_none(value):
 
 def ensure_fast_review_defaults():
     settings = get_settings()
+    if settings.get("embedding_model") in (None, "", LEGACY_EMBEDDING_MODEL):
+        save_setting("embedding_model", DEFAULT_EMBEDDING_MODEL)
     if settings.get("semantic_user_configured") == "true":
         return
     if settings.get("enable_semantic") != "false":

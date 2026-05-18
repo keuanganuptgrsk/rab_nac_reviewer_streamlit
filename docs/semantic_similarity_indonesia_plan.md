@@ -1,6 +1,6 @@
 # Rencana Upgrade Deteksi Sinonim dan Parafrasa Bahasa Indonesia
 
-Dokumen ini merencanakan upgrade semantic matching untuk RAB NAC Reviewer agar lebih kuat membaca sinonim/parafrasa Bahasa Indonesia, tetapi tetap realistis untuk Streamlit Community Cloud gratis.
+Dokumen ini menjelaskan implementasi semantic matching `v1.2.0` untuk RAB NAC Reviewer agar lebih kuat membaca sinonim/parafrasa Bahasa Indonesia, tetapi tetap realistis untuk Streamlit Community Cloud gratis.
 
 ## Tujuan
 
@@ -20,6 +20,14 @@ Dokumen ini merencanakan upgrade semantic matching untuk RAB NAC Reviewer agar l
 
 Referensi hosting: Streamlit Community Cloud menyatakan resource app sekitar CPU 0.078-2 core, memori 690MB-2.7GB, dan storage sampai 50GB, serta dependency dikelola dari `requirements.txt` dan `packages.txt`. Sumber: [Manage your app](https://docs.streamlit.io/deploy/streamlit-community-cloud/manage-your-app), [Managing dependencies](https://docs.streamlit.io/deploy/concepts/dependencies), dan [Status and limitations](https://docs.streamlit.io/deploy/streamlit-community-cloud/status).
 
+## Status Implementasi v1.2.0
+
+- `sentence-transformers` masuk `requirements.txt` utama agar semantic dapat aktif di Streamlit Community Cloud.
+- Default model diset ke `LazarusNLP/all-indo-e5-small-v4`.
+- Semantic tetap default `Nonaktif`; user mengaktifkan dari `Settings`.
+- Jika package/model gagal dimuat, review tetap berjalan dengan lexical mode.
+- Output review membawa audit semantic: kandidat, sumber, alasan, dan model.
+
 ## Arsitektur Deteksi
 
 1. **Candidate generation ringan**
@@ -33,7 +41,7 @@ Referensi hosting: Streamlit Community Cloud menyatakan resource app sekitar CPU
    - Untuk model E5, gunakan prefix:
      - Query: `query: {teks_rab}`
      - Candidate: `passage: {keyword_context}`
-   - Cache model memakai `st.cache_resource`.
+   - Cache model dan embedding index per proses aplikasi.
    - Cache embedding index memakai hash dari keyword aktif + sinonim + feedback positif.
 
 3. **Scoring hybrid**
@@ -42,26 +50,29 @@ Referensi hosting: Streamlit Community Cloud menyatakan resource app sekitar CPU
      - Ketat: 78
      - Seimbang: 70
      - Lebih sensitif: 62
+   - Pure semantic match yang melewati threshold diberi floor confidence minimal `Sedang`, tetapi floor tetap dikurangi allowable dan exception.
    - Bila semantic cocok tetapi allowable/exception kuat, hasil turun confidence dan tetap diberi alasan audit.
 
 4. **Fallback**
    - Jika `sentence-transformers` gagal import, model gagal download, atau memori cloud habis, app otomatis kembali ke lexical mode: exact + sinonim + fuzzy + allowable + exception.
    - UI Settings harus menampilkan status: `Semantic aktif`, `Fallback lexical`, atau `Model gagal dimuat`.
 
-## Rencana Implementasi
+## Detail Implementasi
 
-- Rilis target: `v1.2.0 - Indonesian Semantic Matching Lite`.
-- Tambahkan dependency opsional terkontrol:
+- Rilis: `v1.2.0 - Indonesian Semantic Matching Lite`.
+- Dependency:
   - `sentence-transformers`
-  - hindari `scikit-learn` bila tidak wajib, karena cosine similarity sudah bisa dihitung dengan NumPy.
-- Ubah default model setting ke `LazarusNLP/all-indo-e5-small-v4`, tetapi semantic tetap `Nonaktif` secara default untuk menjaga cold start Streamlit gratis.
-- Perbaiki `modules/vector_indexer.py` agar membuat index dari konteks keyword lengkap, bukan hanya nama keyword.
-- Tambah kolom audit hasil:
+  - tanpa `scikit-learn`, karena cosine similarity dihitung dengan NumPy.
+- Default setting:
+  - `embedding_model=LazarusNLP/all-indo-e5-small-v4`
+  - `enable_semantic=false`
+- `modules/vector_indexer.py` membuat index dari konteks keyword lengkap, bukan hanya nama keyword.
+- Kolom audit hasil:
   - `semantic_candidate_text`
   - `semantic_candidate_source`
   - `semantic_reason`
   - `semantic_model`
-- Tambah panel Settings:
+- Panel Settings:
   - model aktif,
   - status model,
   - jumlah kandidat dalam index,

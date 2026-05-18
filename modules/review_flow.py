@@ -18,11 +18,19 @@ from .excel_loader import (
 from .nac_detector import detect_item, detect_items
 from .ocr_engine import extract_text_from_image, extract_text_from_pdf_scan
 from .pdf_loader import extract_text_from_pdf
+from . import vector_indexer
 
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 UPLOAD_DIR = Path(os.environ.get("RAB_NAC_UPLOAD_DIR", BASE_DIR / "runtime" / "uploads"))
 SUPPORTED_EXTENSIONS = [".xlsx", ".xls", ".csv", ".pdf", ".png", ".jpg", ".jpeg"]
+SEMANTIC_MODEL_OPTIONS = {
+    "LazarusNLP/all-indo-e5-small-v4": "LazarusNLP/all-indo-e5-small-v4",
+    "intfloat/multilingual-e5-small": "intfloat/multilingual-e5-small",
+    "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+    "firqaaa/indo-sentence-bert-base": "firqaaa/indo-sentence-bert-base",
+    "BAAI/bge-m3 (lokal/server kuat)": "BAAI/bge-m3",
+}
 
 DISCLAIMER = (
     "Hasil deteksi adalah bantuan awal untuk review internal. Keputusan final tetap harus divalidasi oleh reviewer "
@@ -277,6 +285,8 @@ def review_summary_dataframe(results: list[dict[str, Any]] | None) -> pd.DataFra
                 "Prosentase NAC",
                 "Type of Transaction",
                 "Tipe Deteksi",
+                "Kandidat Semantic",
+                "Alasan Semantic",
                 "Confidence",
                 "Confidence Level",
                 "Alasan Deteksi",
@@ -296,6 +306,8 @@ def review_summary_dataframe(results: list[dict[str, Any]] | None) -> pd.DataFra
         "correction_percentage_label",
         "transaction_type",
         "match_type",
+        "semantic_candidate_text",
+        "semantic_reason",
         "final_confidence",
         "confidence_label",
         "explanation",
@@ -317,6 +329,8 @@ def review_summary_dataframe(results: list[dict[str, Any]] | None) -> pd.DataFra
             "correction_percentage_label": "Prosentase NAC",
             "transaction_type": "Type of Transaction",
             "match_type": "Tipe Deteksi",
+            "semantic_candidate_text": "Kandidat Semantic",
+            "semantic_reason": "Alasan Semantic",
             "final_confidence": "Confidence",
             "confidence_label": "Confidence Level",
             "explanation": "Alasan Deteksi",
@@ -329,7 +343,7 @@ def all_materials_dataframe(results: list[dict[str, Any]] | None) -> pd.DataFram
     frame = pd.DataFrame(results or [])
     columns = [
         "row_id", "item_per_rab", "matched_category", "correction_percentage_label",
-        "transaction_type", "final_confidence", "confidence_label",
+        "transaction_type", "match_type", "semantic_candidate_text", "semantic_reason", "final_confidence", "confidence_label",
     ]
     labels = {
         "row_id": "Row",
@@ -337,6 +351,9 @@ def all_materials_dataframe(results: list[dict[str, Any]] | None) -> pd.DataFram
         "matched_category": "Kategori NAC",
         "correction_percentage_label": "Prosentase NAC",
         "transaction_type": "Type of Transaction",
+        "match_type": "Tipe Deteksi",
+        "semantic_candidate_text": "Kandidat Semantic",
+        "semantic_reason": "Alasan Semantic",
         "final_confidence": "Confidence %",
         "confidence_label": "Confidence Level",
     }
@@ -400,10 +417,10 @@ def summary_metrics(results: list[dict[str, Any]] | None) -> dict[str, Any]:
 
 def settings_for_mode(review_mode: str, semantic_mode: str, ocr_mode: str) -> dict[str, str]:
     sensitivity = {
-        "Ketat": {"fuzzy_threshold": "86", "semantic_threshold": "72"},
-        "Seimbang": {"fuzzy_threshold": "78", "semantic_threshold": "60"},
-        "Lebih sensitif": {"fuzzy_threshold": "68", "semantic_threshold": "52"},
-    }.get(review_mode, {"fuzzy_threshold": "78", "semantic_threshold": "60"})
+        "Ketat": {"fuzzy_threshold": "86", "semantic_threshold": "78"},
+        "Seimbang": {"fuzzy_threshold": "78", "semantic_threshold": "70"},
+        "Lebih sensitif": {"fuzzy_threshold": "68", "semantic_threshold": "62"},
+    }.get(review_mode, {"fuzzy_threshold": "78", "semantic_threshold": "70"})
     return {
         "enable_semantic": "true" if semantic_mode == "Aktif" else "false",
         "enable_stemming": "false",
@@ -414,19 +431,42 @@ def settings_for_mode(review_mode: str, semantic_mode: str, ocr_mode: str) -> di
     }
 
 
-def save_simple_settings(review_mode: str, semantic_mode: str, ocr_mode: str) -> str:
+def save_simple_settings(review_mode: str, semantic_mode: str, ocr_mode: str, embedding_model: str | None = None) -> str:
     values = settings_for_mode(review_mode, semantic_mode, ocr_mode)
+    if embedding_model:
+        values["embedding_model"] = embedding_model
+        values["semantic_model_user_configured"] = "true"
     for key, value in values.items():
         db.save_setting(key, value)
     return f"Settings tersimpan: mode review {review_mode}, semantic {semantic_mode}, OCR {ocr_mode}."
 
 
 def semantic_package_available() -> bool:
-    try:
-        import sentence_transformers  # noqa: F401
-    except Exception:
-        return False
-    return True
+    return bool(vector_indexer.runtime_status().get("package_available"))
+
+
+def semantic_runtime_overview(model_name: str | None = None) -> dict[str, Any]:
+    settings = db.get_settings()
+    model_id = model_name or settings.get("embedding_model") or vector_indexer.DEFAULT_MODEL
+    status = vector_indexer.runtime_status(model_id)
+    keywords = db.get_keywords(True)
+    synonyms = db.get_synonyms(True)
+    feedback_rows = [row for row in db.get_feedback() if row.get("feedback_type") == "Correct NAC"]
+    candidates = vector_indexer.build_semantic_candidates(keywords, synonyms, feedback_rows)
+    status.update(
+        {
+            "active_keyword_count": len(keywords),
+            "active_synonym_count": len(synonyms),
+            "positive_feedback_count": len(feedback_rows),
+            "candidate_count": len(candidates),
+            "signature": vector_indexer.semantic_index_signature(candidates, model_id)[:12],
+        }
+    )
+    return status
+
+
+def clear_semantic_cache() -> None:
+    vector_indexer.clear_semantic_cache()
 
 
 def row_choices(results: list[dict[str, Any]] | None, only_with_synonym: bool = False) -> list[str]:

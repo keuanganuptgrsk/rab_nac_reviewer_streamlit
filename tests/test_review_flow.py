@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 
@@ -107,7 +108,92 @@ def test_settings_mapping():
 
     assert settings_for_mode("Ketat", "Nonaktif", "auto")["fuzzy_threshold"] == "86"
     assert settings_for_mode("Seimbang", "Aktif", "auto")["enable_semantic"] == "true"
-    assert settings_for_mode("Lebih sensitif", "Nonaktif", "disabled")["semantic_threshold"] == "52"
+    assert settings_for_mode("Lebih sensitif", "Nonaktif", "disabled")["semantic_threshold"] == "62"
+
+
+def fake_semantic_embeddings(texts, model_name="fake-e5", *, kind="passage"):
+    vectors = []
+    for text in texts:
+        value = str(text or "").lower()
+        vector = np.zeros(5, dtype=float)
+        if any(token in value for token in ["hidangan", "makanan", "makan", "catering", "katering"]):
+            vector[0] = 1.0
+        if "konsumsi" in value:
+            vector[4] = 0.7
+        if any(token in value for token in ["publikasi", "running text", "iklan", "banner", "spanduk", "brosur"]):
+            vector[1] = 1.0
+        if any(token in value for token in ["alihdaya", "satpam", "taman", "management building", "gedung"]):
+            vector[2] = 1.0
+        if any(token in value for token in ["transmisi", "jaringan", "gardu"]):
+            vector[3] = 1.0
+        if vector.sum() == 0:
+            vector[4] = 1.0
+        vectors.append(vector)
+    return np.asarray(vectors)
+
+
+def test_semantic_indonesia_with_mock_embeddings(monkeypatch, tmp_path):
+    db, review_flow, _, _ = load_modules(monkeypatch, tmp_path)
+
+    import modules.vector_indexer as vector_indexer
+
+    monkeypatch.setattr(vector_indexer, "embed_texts", fake_semantic_embeddings)
+    db.save_setting("enable_semantic", "true")
+    db.save_setting("embedding_model", "fake-e5")
+    db.save_setting("semantic_threshold", "70")
+
+    samples = {
+        "hidangan peserta rapat": "Bahan Makanan dan Konsumsi",
+        "publikasi running text kantor": "Iklan Brosur Spanduk Publikasi Banner",
+        "alihdaya gedung satpam taman": "Management Building Gedung CS Satpam Taman",
+    }
+    for text, expected_keyword in samples.items():
+        result = review_flow.analyze_redaction(text)
+        assert result["matched_keyword"] == expected_keyword
+        assert result["match_type"] == "semantic"
+        assert result["semantic_score"] >= 70
+        assert result["semantic_candidate_text"] == expected_keyword
+        assert result["semantic_model"] == "fake-e5"
+        assert result["confidence_label"] in {"Sedang", "Tinggi", "Sangat tinggi"}
+
+
+def test_semantic_does_not_override_allowable_or_low_signal(monkeypatch, tmp_path):
+    db, review_flow, _, _ = load_modules(monkeypatch, tmp_path)
+
+    import modules.vector_indexer as vector_indexer
+
+    monkeypatch.setattr(vector_indexer, "embed_texts", fake_semantic_embeddings)
+    db.save_setting("enable_semantic", "true")
+    db.save_setting("embedding_model", "fake-e5")
+    db.save_setting("semantic_threshold", "70")
+
+    technical = review_flow.analyze_redaction("perbaikan jaringan transmisi")
+    assert technical["match_type"] != "semantic"
+    assert technical["confidence_label"] in {"Sangat rendah", "Rendah"}
+
+    fuel = review_flow.analyze_redaction("konsumsi bahan bakar genset")
+    assert fuel["allowable_score"] >= 60
+    assert fuel["confidence_label"] in {"Sangat rendah", "Rendah"}
+
+
+def test_semantic_index_signature_and_clear_cache(monkeypatch, tmp_path):
+    db, _, _, _ = load_modules(monkeypatch, tmp_path)
+
+    import modules.vector_indexer as vector_indexer
+
+    monkeypatch.setattr(vector_indexer, "embed_texts", fake_semantic_embeddings)
+    before = vector_indexer.semantic_index_signature(db.get_keywords(True), "fake-e5", db.get_synonyms(True), db.get_feedback())
+    new_id = db.add_keyword("Audit", "keyword semantic signature", "", "", "medium", "active", "")
+    db.add_synonym(new_id, "alias signature")
+    after_add = vector_indexer.semantic_index_signature(db.get_keywords(True), "fake-e5", db.get_synonyms(True), db.get_feedback())
+    assert before != after_add
+
+    db.update_keyword_status(new_id, "inactive")
+    after_inactive = vector_indexer.semantic_index_signature(db.get_keywords(True), "fake-e5", db.get_synonyms(True), db.get_feedback())
+    assert after_add != after_inactive
+
+    vector_indexer.clear_semantic_cache()
+    assert vector_indexer.runtime_status("fake-e5")["cached_index_count"] == 0
 
 
 def test_keyword_and_feedback_actions(monkeypatch, tmp_path):

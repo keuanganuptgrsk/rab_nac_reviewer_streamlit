@@ -6,7 +6,7 @@ from . import db
 from .confidence_engine import calculate_confidence, confidence_label
 from .suggestion_engine import generate_suggestion, recommended_action
 from .text_normalizer import normalize_text
-from .vector_indexer import best_semantic_match
+from .vector_indexer import DEFAULT_MODEL, best_semantic_match
 
 
 def _bool(value):
@@ -110,6 +110,12 @@ def detect_item(item, settings=None):
     semantic_threshold = float(settings.get("semantic_threshold", 60))
 
     best = {"row": None, "match_type": "none", "exact_syn": 0, "fuzzy": 0, "semantic": 0}
+    semantic_details = {
+        "semantic_candidate_text": "",
+        "semantic_candidate_source": "",
+        "semantic_reason": "",
+        "semantic_model": settings.get("embedding_model") or DEFAULT_MODEL,
+    }
     for row in keywords:
         kw_norm = normalize_text(row.get("keyword", ""))
         if kw_norm and kw_norm in norm:
@@ -145,12 +151,29 @@ def detect_item(item, settings=None):
         if match and match[1] >= fuzzy_threshold:
             best = {"row": choices[match[0]], "match_type": "fuzzy", "exact_syn": 0, "fuzzy": float(match[1]), "semantic": 0}
     if _bool(settings.get("enable_semantic", "true")):
-        sem_row, sem_score = best_semantic_match(norm, keywords, settings.get("embedding_model"))
-        if sem_row and sem_score >= semantic_threshold and sem_score > best.get("semantic", 0):
-            if not best["row"] or sem_score > max(best["fuzzy"], best["exact_syn"]):
-                best = {"row": sem_row, "match_type": "semantic", "exact_syn": 0, "fuzzy": best.get("fuzzy", 0), "semantic": sem_score}
+        sem_row, sem_score, semantic_details = best_semantic_match(
+            norm,
+            keywords,
+            settings.get("embedding_model"),
+            synonyms,
+            db.get_feedback(),
+            return_details=True,
+        )
+        if sem_row:
+            if sem_score >= semantic_threshold and sem_score > best.get("semantic", 0):
+                semantic_details["semantic_reason"] = (
+                    f"{semantic_details.get('semantic_reason', '')} "
+                    f"Skor melewati threshold {semantic_threshold:.0f}; sinyal semantic dipakai untuk confidence."
+                ).strip()
+                if not best["row"] or sem_score > max(best["fuzzy"], best["exact_syn"]):
+                    best = {"row": sem_row, "match_type": "semantic", "exact_syn": 0, "fuzzy": best.get("fuzzy", 0), "semantic": sem_score}
+                else:
+                    best["semantic"] = sem_score
             else:
-                best["semantic"] = sem_score
+                semantic_details["semantic_reason"] = (
+                    f"{semantic_details.get('semantic_reason', '')} "
+                    f"Skor di bawah threshold {semantic_threshold:.0f}; tidak menaikkan confidence."
+                ).strip()
 
     matched = best["row"] or {}
     allowable_score, allowable_kw = _allowable_score(norm, allowable)
@@ -180,9 +203,14 @@ def detect_item(item, settings=None):
         exception_penalty,
         settings,
     )
+    if best["match_type"] == "semantic" and best.get("semantic", 0) >= semantic_threshold:
+        semantic_floor = 45 + min(20, (best["semantic"] - semantic_threshold) * 0.5)
+        semantic_floor -= float(settings.get("allowable_penalty_weight", 0.20)) * allowable_score
+        semantic_floor -= exception_penalty
+        score = max(score, max(0, min(100, semantic_floor)))
     label = confidence_label(score)
     manual = score >= 45 or (score >= 35 and allowable_score >= 60) or (exception_hit and exc.get("action") == "manual_review")
-    explanation = _explanation(best, matched, allowable_score, allowable_kw, exc, feedback_adj)
+    explanation = _explanation(best, matched, allowable_score, allowable_kw, exc, feedback_adj, semantic_details)
     suggestion = generate_suggestion(original, matched.get("keyword", ""), matched.get("category", ""), score, allowable_score, exception_hit)
     synonym_candidate, synonym_for, synonym_confidence, synonym_reason = _suggest_synonym(original, norm, matched, best, settings)
     return {
@@ -212,6 +240,10 @@ def detect_item(item, settings=None):
         "match_type": best["match_type"],
         "fuzzy_score": round(best["fuzzy"], 2),
         "semantic_score": round(best["semantic"], 2),
+        "semantic_candidate_text": semantic_details.get("semantic_candidate_text", ""),
+        "semantic_candidate_source": semantic_details.get("semantic_candidate_source", ""),
+        "semantic_reason": semantic_details.get("semantic_reason", ""),
+        "semantic_model": semantic_details.get("semantic_model", settings.get("embedding_model") or DEFAULT_MODEL),
         "allowable_score": round(allowable_score, 2),
         "final_confidence": round(score, 2),
         "confidence_label": label,
@@ -232,10 +264,16 @@ def detect_items(items, settings=None):
     return [detect_item(item, settings) for item in items]
 
 
-def _explanation(best, matched, allowable_score, allowable_kw, exc, feedback_adj):
+def _explanation(best, matched, allowable_score, allowable_kw, exc, feedback_adj, semantic_details=None):
+    semantic_details = semantic_details or {}
     parts = []
     if matched:
         parts.append(f"Terindikasi melalui {best['match_type']} terhadap '{matched.get('keyword')}'.")
+        if best.get("semantic", 0) and semantic_details.get("semantic_candidate_text"):
+            parts.append(
+                "Semantic Bahasa Indonesia cocok dengan "
+                f"'{semantic_details.get('semantic_candidate_text')}' ({best.get('semantic', 0):.0f})."
+            )
         if matched.get("transaction_type"):
             parts.append(f"Type of transaction: {matched.get('transaction_type')}.")
         if matched.get("correction_percentage") not in (None, ""):
