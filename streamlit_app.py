@@ -68,7 +68,7 @@ def load_uploaded_file(uploaded_file) -> None:
 def review_page() -> None:
     ui.hero(APP_VERSION, APP_RELEASE_TITLE, APP_RELEASE_NOTES, current_metrics())
     st.markdown(
-        "Upload Excel/CSV untuk hasil paling presisi. PDF digital dan gambar/PDF scan tetap didukung melalui ekstraksi teks atau OCR best-effort."
+        "Upload Excel/CSV untuk hasil paling presisi. PDF digital didukung; gambar/PDF scan memerlukan engine OCR pada runtime dan diproses secara best-effort."
     )
 
     uploaded = st.file_uploader(
@@ -558,6 +558,12 @@ def settings_page() -> None:
     if semantic_mode == "Aktif" and not semantic_available:
         st.warning("Paket sentence-transformers belum terpasang. Semantic matching akan fallback tanpa menghentikan review.")
 
+    ui.section_label("Status OCR Runtime")
+    ocr_overview = review_flow.ocr_runtime_overview()
+    ui.status_note(ocr_overview["message"])
+    if ocr_overview["available_engines"]:
+        st.caption("Engine OCR aktif: " + ", ".join(ocr_overview["available_engines"]))
+
     ui.section_label("Semantic Bahasa Indonesia")
     overview = review_flow.semantic_runtime_overview(model_options.get(model_label, current_model))
     st.dataframe(
@@ -593,7 +599,7 @@ def settings_page() -> None:
         st.markdown(version_banner())
         st.markdown(
             """
-Rilis ini memakai tag git `v1.2.0`. Untuk rollback lokal, gunakan tag stabil dari GitHub atau jalankan `git checkout v1.1.0` pada salinan repo. Untuk Streamlit Cloud, deploy ulang branch atau tag yang ingin dipakai.
+Rilis ini memakai tag git `v1.2.1`. Untuk rollback lokal, gunakan tag stabil dari GitHub atau jalankan `git checkout v1.2.0` pada salinan repo. Untuk Streamlit Cloud, deploy ulang branch atau tag yang ingin dipakai.
 """
         )
 

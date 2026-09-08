@@ -1,5 +1,5 @@
-APP_VERSION = "1.2.0"
-APP_RELEASE_TITLE = "Indonesian Semantic Matching Lite"
+APP_VERSION = "1.2.1"
+APP_RELEASE_TITLE = "Streamlit Cloud Build Reliability"
 APP_RELEASE_NOTES = (
     "Review potensi NAC dengan mudah~"
 )

@@ -2,6 +2,13 @@
 
 Semua penambahan fitur harus dicatat dengan format: versi, judul, tanggal, dan keterangan.
 
+## v1.2.1 - Streamlit Cloud Build Reliability - 2026-09-08
+
+- Menghapus `packages.txt` agar build Streamlit Community Cloud tidak bergantung pada repository APT Debian.
+- Menambahkan pemeriksaan ketersediaan Tesseract, PaddleOCR, dan EasyOCR sebelum engine dipanggil.
+- Menambahkan status OCR runtime pada halaman Settings dan pesan fallback untuk gambar/PDF scan.
+- Mempertahankan OCR Tesseract untuk instalasi lokal tanpa menghambat Excel, CSV, PDF teks, semantic matching, dan review di Cloud.
+
 ## v1.2.0 - Indonesian Semantic Matching Lite - 2026-05-18
 
 - Menambahkan semantic similarity Bahasa Indonesia berbasis Hugging Face untuk mendeteksi sinonim dan parafrasa NAC.

@@ -16,7 +16,7 @@ from .excel_loader import (
     normalize_dataframe,
 )
 from .nac_detector import detect_item, detect_items
-from .ocr_engine import extract_text_from_image, extract_text_from_pdf_scan
+from .ocr_engine import extract_text_from_image, extract_text_from_pdf_scan, ocr_runtime_status
 from .pdf_loader import extract_text_from_pdf
 from . import vector_indexer
 
@@ -443,6 +443,10 @@ def save_simple_settings(review_mode: str, semantic_mode: str, ocr_mode: str, em
 
 def semantic_package_available() -> bool:
     return bool(vector_indexer.runtime_status().get("package_available"))
+
+
+def ocr_runtime_overview() -> dict[str, Any]:
+    return ocr_runtime_status()
 
 
 def semantic_runtime_overview(model_name: str | None = None) -> dict[str, Any]:

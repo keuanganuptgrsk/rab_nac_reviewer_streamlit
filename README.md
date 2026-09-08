@@ -2,7 +2,7 @@
 
 RAB NAC Reviewer adalah aplikasi Streamlit untuk membantu reviewer finance melakukan review awal dokumen RAB dan mendeteksi potensi NAC. Aplikasi ini tidak menggantikan keputusan reviewer; hasil deteksi wajib divalidasi terhadap PMK, kebijakan internal, dan konteks pekerjaan.
 
-Versi aktif: `v1.2.0 - Indonesian Semantic Matching Lite`.
+Versi aktif: `v1.2.1 - Streamlit Cloud Build Reliability`.
 
 ## Fitur
 
@@ -43,7 +43,6 @@ Versi aktif: `v1.2.0 - Indonesian Semantic Matching Lite`.
 1. Pastikan repo GitHub berisi file ini di root:
    - `streamlit_app.py`
    - `requirements.txt`
-   - `packages.txt`
    - `.streamlit/config.toml`
    - folder `modules/`
    - folder `data/` berisi template/seed, bukan `app.db`
@@ -56,6 +55,8 @@ Versi aktif: `v1.2.0 - Indonesian Semantic Matching Lite`.
 8. Klik `Deploy`.
 
 Catatan penting: Streamlit Community Cloud gratis cocok untuk penggunaan ringan. SQLite di hosting gratis bersifat praktis, tetapi tetap perlu backup rutin dari tombol `Buat Backup Database`, terutama setelah menambah keyword atau feedback penting.
+
+Repo tidak memakai `packages.txt` agar build Cloud tidak bergantung pada instalasi APT Debian. Perubahan dependency dari GitHub biasanya memicu redeploy otomatis. Jika build lama masih tampil, buka `Manage app`, pilih menu tambahan, lalu klik `Reboot app`.
 
 ## Menjalankan Lokal
 
@@ -97,15 +98,24 @@ python -m pytest
 
 ## OCR
 
-OCR memakai Tesseract melalui `pytesseract`. Di Streamlit Cloud, `packages.txt` memasang:
+OCR gambar dan PDF scan memakai Tesseract secara lokal. Streamlit Community Cloud tidak memasang binary Tesseract pada rilis ini agar deployment tetap stabil; gunakan Excel, CSV, atau PDF berbasis teks saat memakai Cloud.
 
-```text
-tesseract-ocr
-tesseract-ocr-eng
-tesseract-ocr-ind
+Windows lokal:
+
+```powershell
+# Install Tesseract OCR beserta data bahasa Indonesia, lalu pastikan command tersedia.
+tesseract --version
+tesseract --list-langs
 ```
 
-Untuk Windows lokal, install Tesseract OCR dan pastikan command `tesseract` tersedia di `PATH`.
+Linux lokal:
+
+```bash
+sudo apt-get update
+sudo apt-get install tesseract-ocr tesseract-ocr-eng tesseract-ocr-ind
+```
+
+Halaman `Settings` menampilkan status OCR runtime. Jika statusnya `Tidak tersedia pada hosting ini`, file selain gambar/PDF scan tetap dapat direview seperti biasa.
 
 ## Semantic Bahasa Indonesia
 
@@ -127,13 +137,13 @@ Roadmap dan catatan teknis semantic berada di [docs/semantic_similarity_indonesi
 
 ## Versioning dan Rollback
 
-Rilis ini ditandai sebagai tag git `v1.2.0`.
+Rilis ini ditandai sebagai tag git `v1.2.1`.
 
 Rollback lokal:
 
 ```powershell
 git fetch --tags
-git checkout v1.1.0
+git checkout v1.2.0
 ```
 
 Rollback deploy Streamlit Cloud:

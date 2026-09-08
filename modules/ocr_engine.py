@@ -1,5 +1,43 @@
+import importlib.util
+import shutil
 from pathlib import Path
 from tempfile import TemporaryDirectory
+
+
+def _module_available(module_name):
+    try:
+        return importlib.util.find_spec(module_name) is not None
+    except (ImportError, ModuleNotFoundError, ValueError):
+        return False
+
+
+def ocr_runtime_status():
+    tesseract_ready = (
+        _module_available("pytesseract")
+        and _module_available("PIL")
+        and shutil.which("tesseract") is not None
+    )
+    available_engines = []
+    if tesseract_ready:
+        available_engines.append("tesseract")
+    if _module_available("paddleocr"):
+        available_engines.append("paddleocr")
+    if _module_available("easyocr"):
+        available_engines.append("easyocr")
+
+    if available_engines:
+        message = "OCR tersedia pada runtime ini: " + ", ".join(available_engines) + "."
+    else:
+        message = (
+            "OCR tidak tersedia pada hosting ini. Gunakan Excel, CSV, atau PDF berbasis teks; "
+            "gambar dan PDF scan dapat diproses pada instalasi lokal yang memiliki Tesseract."
+        )
+    return {
+        "available": bool(available_engines),
+        "available_engines": available_engines,
+        "tesseract_binary": shutil.which("tesseract") or "",
+        "message": message,
+    }
 
 
 def _easyocr_text(image_path):
@@ -61,11 +99,17 @@ def _tesseract_text(image_path):
 
 def extract_text_from_image(image_path, mode="auto"):
     path = Path(image_path)
+    if mode == "disabled":
+        return "", "OCR dinonaktifkan."
+
+    runtime = ocr_runtime_status()
+    available = runtime["available_engines"]
+    engines = available if mode in ("auto", "", None) else ([mode] if mode in available else [])
+    if not engines:
+        return "", runtime["message"]
+
     errors = []
-    engines = ["tesseract", "paddleocr", "easyocr"] if mode in ("auto", "", None) else [mode]
     for engine in engines:
-        if engine == "disabled":
-            return "", "OCR dinonaktifkan."
         try:
             if engine == "easyocr":
                 text = _easyocr_text(path)
@@ -79,7 +123,7 @@ def extract_text_from_image(image_path, mode="auto"):
                 return text, f"OCR berhasil menggunakan {engine}."
         except Exception as exc:
             errors.append(f"{engine}: {exc}")
-    return "", "OCR tidak tersedia/berhasil. Pastikan dependency OCR terpasang, atau upload Excel/CSV/PDF berbasis teks. " + " | ".join(errors[:3])
+    return "", "OCR tersedia tetapi gagal membaca file. Coba upload Excel, CSV, atau PDF berbasis teks. " + " | ".join(errors[:3])
 
 
 def extract_text_from_pdf_scan(pdf_path, mode="auto", max_pages=25):

@@ -111,6 +111,83 @@ def test_settings_mapping():
     assert settings_for_mode("Lebih sensitif", "Nonaktif", "disabled")["semantic_threshold"] == "62"
 
 
+def test_ocr_runtime_detects_local_tesseract(monkeypatch):
+    import modules.ocr_engine as ocr_engine
+
+    monkeypatch.setattr(ocr_engine, "_module_available", lambda name: name in {"pytesseract", "PIL"})
+    monkeypatch.setattr(
+        ocr_engine.shutil,
+        "which",
+        lambda executable: "C:/Program Files/Tesseract-OCR/tesseract.exe" if executable == "tesseract" else None,
+    )
+
+    status = ocr_engine.ocr_runtime_status()
+
+    assert status["available"] is True
+    assert status["available_engines"] == ["tesseract"]
+    assert "OCR tersedia" in status["message"]
+
+
+def test_ocr_runtime_unavailable_returns_cloud_safe_message(monkeypatch, tmp_path):
+    import modules.ocr_engine as ocr_engine
+
+    monkeypatch.setattr(ocr_engine, "_module_available", lambda name: False)
+    monkeypatch.setattr(ocr_engine.shutil, "which", lambda executable: None)
+
+    status = ocr_engine.ocr_runtime_status()
+    text, message = ocr_engine.extract_text_from_image(tmp_path / "scan.png", "auto")
+
+    assert status["available"] is False
+    assert status["available_engines"] == []
+    assert text == ""
+    assert "tidak tersedia pada hosting ini" in message
+    assert "Excel, CSV, atau PDF berbasis teks" in message
+
+
+def test_ocr_auto_uses_available_engine(monkeypatch, tmp_path):
+    import modules.ocr_engine as ocr_engine
+
+    monkeypatch.setattr(
+        ocr_engine,
+        "ocr_runtime_status",
+        lambda: {
+            "available": True,
+            "available_engines": ["tesseract"],
+            "tesseract_binary": "tesseract",
+            "message": "OCR tersedia pada runtime ini: tesseract.",
+        },
+    )
+    monkeypatch.setattr(ocr_engine, "_tesseract_text", lambda path: "Biaya konsumsi rapat koordinasi")
+
+    text, message = ocr_engine.extract_text_from_image(tmp_path / "scan.png", "auto")
+
+    assert text == "Biaya konsumsi rapat koordinasi"
+    assert message == "OCR berhasil menggunakan tesseract."
+
+
+def test_digital_pdf_does_not_require_ocr(monkeypatch, tmp_path):
+    _, review_flow, _, _ = load_modules(monkeypatch, tmp_path)
+    import fitz
+    import modules.ocr_engine as ocr_engine
+
+    monkeypatch.setattr(
+        ocr_engine,
+        "ocr_runtime_status",
+        lambda: {"available": False, "available_engines": [], "tesseract_binary": "", "message": "OCR tidak tersedia."},
+    )
+    pdf_path = tmp_path / "digital.pdf"
+    with fitz.open() as document:
+        page = document.new_page()
+        page.insert_text((72, 72), "Biaya konsumsi rapat koordinasi untuk pelaksanaan pekerjaan kantor")
+        document.save(pdf_path)
+
+    loaded = review_flow.load_uploaded_path(pdf_path)
+
+    assert loaded["state"]["source_quality"] == "digital_pdf"
+    assert loaded["state"]["data"]
+    assert "Berhasil ekstrak teks" in loaded["message"]
+
+
 def fake_semantic_embeddings(texts, model_name="fake-e5", *, kind="passage"):
     vectors = []
     for text in texts:
@@ -278,3 +355,30 @@ def test_streamlit_app_smoke_shows_release_copy(monkeypatch, tmp_path):
     assert not at.exception
     markdown_text = "\n".join(str(item.value) for item in at.markdown)
     assert "Review potensi NAC dengan mudah~" in markdown_text
+
+
+def test_streamlit_settings_shows_ocr_runtime_status(monkeypatch, tmp_path):
+    monkeypatch.setenv("RAB_NAC_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("RAB_NAC_DB_PATH", str(tmp_path / "data" / "app.db"))
+    monkeypatch.setenv("RAB_NAC_EXPORT_DIR", str(tmp_path / "exports"))
+    monkeypatch.setenv("RAB_NAC_UPLOAD_DIR", str(tmp_path / "uploads"))
+
+    from streamlit.testing.v1 import AppTest
+
+    script = """
+from modules import db
+from modules import ui_system as ui
+from streamlit_app import init_session, settings_page
+
+ui.apply_page_config()
+db.init_db()
+init_session()
+ui.inject_css()
+settings_page()
+"""
+    at = AppTest.from_string(script, default_timeout=20).run()
+
+    assert not at.exception
+    markdown_text = "\n".join(str(item.value) for item in at.markdown)
+    assert "Status OCR Runtime" in markdown_text
+    assert "OCR" in markdown_text
