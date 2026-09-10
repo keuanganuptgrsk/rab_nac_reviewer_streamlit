@@ -99,7 +99,12 @@ def best_semantic_match(
         empty = (None, 0.0, _details("", "", "", model_id, "Semantic index kosong."))
         return empty if return_details else empty[:2]
 
-    local_idx = int(np.argmax(sims))
+    max_similarity = float(np.max(sims))
+    tied = [idx for idx, value in enumerate(sims) if max_similarity - float(value) <= 0.005]
+    local_idx = max(
+        tied,
+        key=lambda idx: _lexical_support(text, candidates[selected_indices[idx]]),
+    )
     candidate_idx = selected_indices[local_idx]
     candidate = candidates[candidate_idx]
     score = float(sims[local_idx] * 100)
@@ -253,6 +258,14 @@ def runtime_status(model_name: str = DEFAULT_MODEL) -> dict[str, Any]:
         "model_status": _MODEL_STATUS.get(model_id, "not_loaded"),
         "cached_index_count": len(_INDEX_CACHE),
     }
+
+
+def _lexical_support(text: str, candidate: dict[str, Any]) -> tuple[int, float]:
+    query_tokens = set(str(text or "").lower().split())
+    candidate_tokens = set(str(candidate.get("keyword_context") or "").lower().split())
+    overlap = len(query_tokens & candidate_tokens)
+    coverage = overlap / max(1, len(query_tokens))
+    return overlap, coverage
 
 
 def _candidate_indices(text: str, candidates: list[dict[str, Any]], limit: int) -> list[int]:

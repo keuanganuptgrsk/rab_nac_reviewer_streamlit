@@ -227,7 +227,7 @@ def test_semantic_indonesia_with_mock_embeddings(monkeypatch, tmp_path):
     for text, expected_keyword in samples.items():
         result = review_flow.analyze_redaction(text)
         assert result["matched_keyword"] == expected_keyword
-        assert result["match_type"] == "semantic"
+        assert result["match_type"] in {"semantic", "synonym"}
         assert result["semantic_score"] >= 70
         assert result["semantic_candidate_text"] == expected_keyword
         assert result["semantic_model"] == "fake-e5"
@@ -382,3 +382,164 @@ settings_page()
     markdown_text = "\n".join(str(item.value) for item in at.markdown)
     assert "Status OCR Runtime" in markdown_text
     assert "OCR" in markdown_text
+
+
+def test_hierarchical_context_uses_item_as_primary_evidence(monkeypatch, tmp_path):
+    _, review_flow, _, _ = load_modules(monkeypatch, tmp_path)
+
+    result = review_flow.analyze_redaction(
+        "Kabel penghantar 150 mm",
+        "Bahan Makanan dan Konsumsi",
+        "Pemeliharaan jaringan transmisi",
+    )
+
+    assert result["title_match_keyword"] == "Bahan Makanan dan Konsumsi"
+    assert result["item_match_score"] < 45
+    assert result["final_confidence"] <= 44
+    assert result["applied_nac_percentage"] == ""
+    assert result["percentage_status"].startswith("Perlu penentuan reviewer")
+    assert result["allowable_score"] >= 40
+
+
+def test_consistent_hierarchy_increases_confidence_and_applies_rule(monkeypatch, tmp_path):
+    _, review_flow, _, _ = load_modules(monkeypatch, tmp_path)
+
+    item_only = review_flow.analyze_redaction("Sewa kendaraan operasional bulanan")
+    contextual = review_flow.analyze_redaction(
+        "Sewa kendaraan operasional bulanan",
+        "Sewa kendaraan operasional unit",
+        "Sewa kendaraan untuk kegiatan operasional",
+    )
+
+    assert contextual["selected_transaction_type"].startswith("Sewa Kendaraan")
+    assert contextual["applied_nac_percentage"] == 29
+    assert contextual["context_consistency_score"] == 100
+    assert contextual["final_confidence"] > item_only["final_confidence"]
+    assert contextual["percentage_status"] == "Diterapkan dari transaksi terpilih"
+
+
+def test_production_percentages_are_rules_not_confidence(monkeypatch, tmp_path):
+    _, review_flow, _, _ = load_modules(monkeypatch, tmp_path)
+    samples = {
+        "sewa kendaraan operasional": 29,
+        "SPPD non diklat": 21,
+        "management building CS satpam taman": 10,
+        "renovasi ruang kerja": 20,
+        "publikasi media running text": 80,
+    }
+
+    confidences = set()
+    for text, percentage in samples.items():
+        result = review_flow.analyze_redaction(text)
+        assert result["applied_nac_percentage"] == percentage
+        assert result["reference_percentage"] == percentage
+        assert result["correction_percentage"] == percentage
+        confidences.add(result["final_confidence"])
+
+    assert len(confidences) > 1
+
+
+def test_ambiguous_transactions_hold_percentage_for_reviewer(monkeypatch, tmp_path):
+    db, review_flow, _, _ = load_modules(monkeypatch, tmp_path)
+    first = db.add_keyword(
+        "Audit",
+        "Transaksi Campuran Alfa",
+        severity="high",
+        correction_percentage=20,
+        transaction_type="Transaksi Alfa",
+    )
+    second = db.add_keyword(
+        "Audit",
+        "Transaksi Campuran Beta",
+        severity="high",
+        correction_percentage=80,
+        transaction_type="Transaksi Beta",
+    )
+    db.add_synonym(first, "komponen campuran khusus", weight=0.95)
+    db.add_synonym(second, "komponen campuran khusus", weight=0.95)
+
+    result = review_flow.analyze_redaction("komponen campuran khusus")
+
+    assert result["is_ambiguous"] is True
+    assert result["applied_nac_percentage"] == ""
+    assert result["correction_percentage_label"] == "Perlu penentuan reviewer"
+    assert "Ambigu" in result["percentage_status"]
+    assert result["alternative_transaction"]
+
+
+def test_build_items_preserves_hierarchical_fields(monkeypatch, tmp_path):
+    _, review_flow, _, _ = load_modules(monkeypatch, tmp_path)
+    state = {
+        "kind": "table",
+        "path": str(tmp_path / "rab.xlsx"),
+        "sheet": "RAB",
+        "detected": {},
+        "data": [
+            {
+                "row_id": "7",
+                "judul_rab": "Pemeliharaan Gardu Induk",
+                "section": "Material pekerjaan teknis",
+                "item_per_rab": "Kabel kontrol 4 x 2.5 mm",
+                "review_text": (
+                    "Pemeliharaan Gardu Induk | Material pekerjaan teknis | Kabel kontrol 4 x 2.5 mm"
+                ),
+            }
+        ],
+    }
+
+    items, _ = review_flow.build_items(state, ["review_text"])
+
+    assert items[0]["judul_rab"] == "Pemeliharaan Gardu Induk"
+    assert items[0]["section"] == "Material pekerjaan teknis"
+    assert items[0]["item_per_rab"] == "Kabel kontrol 4 x 2.5 mm"
+    assert "Pemeliharaan Gardu Induk" in items[0]["original_text"]
+
+
+def test_context_audit_fields_reach_dataframes_and_exports(monkeypatch, tmp_path):
+    _, review_flow, _, export_engine = load_modules(monkeypatch, tmp_path)
+    result = review_flow.analyze_redaction(
+        "Sewa kendaraan operasional bulanan",
+        "Operasional Unit",
+        "Transportasi pendukung",
+    )
+    required = {
+        "title_match_keyword",
+        "title_match_score",
+        "section_match_keyword",
+        "section_match_score",
+        "item_match_keyword",
+        "item_match_score",
+        "context_consistency_score",
+        "selected_transaction_type",
+        "reference_percentage",
+        "applied_nac_percentage",
+        "percentage_source",
+        "percentage_status",
+        "alternative_transaction",
+        "alternative_percentage",
+        "decision_reason",
+    }
+    assert required.issubset(result)
+
+    summary = review_flow.review_summary_dataframe([result])
+    all_items = review_flow.all_materials_dataframe([result])
+    for column in [
+        "Prosentase Referensi",
+        "Status Prosentase",
+        "Konsistensi Konteks",
+        "Match Judul",
+        "Match Subjudul",
+        "Match Item",
+        "Alasan Keputusan",
+    ]:
+        assert column in summary.columns
+        assert column in all_items.columns
+
+    all_excel = Path(export_engine.export_all_materials_excel([result]))
+    full_excel = Path(export_engine.export_review_excel([result]))
+    exported = pd.read_excel(all_excel)
+    findings = pd.read_excel(full_excel, sheet_name="Findings")
+    assert "Status Prosentase" in exported.columns
+    assert "Konsistensi Konteks %" in exported.columns
+    assert "percentage_status" in findings.columns
+    assert "decision_reason" in findings.columns

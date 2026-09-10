@@ -1,5 +1,5 @@
-APP_VERSION = "1.2.1"
-APP_RELEASE_TITLE = "Streamlit Cloud Build Reliability"
+APP_VERSION = "1.3.0"
+APP_RELEASE_TITLE = "Context-Aware Hierarchical NAC Review"
 APP_RELEASE_NOTES = (
     "Review potensi NAC dengan mudah~"
 )

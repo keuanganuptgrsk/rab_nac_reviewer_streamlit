@@ -19,16 +19,24 @@ def export_review_excel(results):
             "row_id", "source_file", "page_or_sheet", "original_text", "normalized_text", "item_description",
             "volume", "unit", "unit_price", "total_price", "matched_keyword", "matched_category", "match_type",
             "nac_group", "correction_percentage", "correction_percentage_label", "transaction_type",
-            "gl_account", "gl_account_description",
+            "reference_percentage", "reference_percentage_label", "applied_nac_percentage", "percentage_source",
+            "percentage_status", "selected_transaction_type", "alternative_transaction", "alternative_percentage",
+            "alternative_percentage_label", "is_ambiguous", "gl_account", "gl_account_description",
+            "title_match_keyword", "title_match_score", "section_match_keyword", "section_match_score",
+            "item_match_keyword", "item_match_score", "context_consistency_score", "context_conflict_penalty",
             "fuzzy_score", "semantic_score", "allowable_score", "final_confidence", "confidence_label",
             "semantic_candidate_text", "semantic_candidate_source", "semantic_reason", "semantic_model",
-            "explanation", "recommended_action", "redaction_suggestion", "suggested_synonym_candidate",
+            "decision_reason", "explanation", "recommended_action", "redaction_suggestion", "suggested_synonym_candidate",
             "suggested_synonym_for_keyword", "synonym_suggestion_confidence", "synonym_suggestion_reason",
             "user_feedback", "reviewer_notes",
         ])
     required_columns = [
         "row_id", "redaction_suggestion", "recommended_action", "matched_keyword", "matched_category",
-        "nac_group", "correction_percentage_label", "transaction_type", "gl_account",
+        "nac_group", "correction_percentage_label", "reference_percentage_label", "percentage_status",
+        "transaction_type", "selected_transaction_type", "percentage_source", "alternative_transaction",
+        "alternative_percentage_label", "title_match_keyword", "title_match_score", "section_match_keyword",
+        "section_match_score", "item_match_keyword", "item_match_score", "context_consistency_score",
+        "decision_reason", "gl_account",
         "gl_account_description", "match_type", "fuzzy_score", "semantic_score",
         "semantic_candidate_text", "semantic_candidate_source", "semantic_reason", "semantic_model",
     ]
@@ -39,11 +47,19 @@ def export_review_excel(results):
     with pd.ExcelWriter(path, engine="xlsxwriter") as writer:
         summary.to_excel(writer, sheet_name="Summary", index=False)
         findings.to_excel(writer, sheet_name="Findings", index=False)
-        findings[["row_id", "redaction_suggestion", "recommended_action", "correction_percentage_label", "transaction_type", "semantic_reason"]].to_excel(writer, sheet_name="Suggestions", index=False)
+        findings[[
+            "row_id", "redaction_suggestion", "recommended_action", "correction_percentage_label",
+            "reference_percentage_label", "percentage_status", "selected_transaction_type",
+            "alternative_transaction", "alternative_percentage_label", "decision_reason", "semantic_reason",
+        ]].to_excel(writer, sheet_name="Suggestions", index=False)
         pd.DataFrame(db.get_feedback()).to_excel(writer, sheet_name="Feedback Log", index=False)
         findings[[
             "row_id", "matched_keyword", "matched_category", "nac_group", "correction_percentage_label",
-            "transaction_type", "gl_account", "gl_account_description", "match_type", "fuzzy_score", "semantic_score",
+            "reference_percentage_label", "percentage_status", "selected_transaction_type", "percentage_source",
+            "alternative_transaction", "alternative_percentage_label", "title_match_keyword", "title_match_score",
+            "section_match_keyword", "section_match_score", "item_match_keyword", "item_match_score",
+            "context_consistency_score", "decision_reason", "gl_account", "gl_account_description", "match_type",
+            "fuzzy_score", "semantic_score",
             "semantic_candidate_text", "semantic_candidate_source", "semantic_reason", "semantic_model",
         ]].to_excel(writer, sheet_name="Keyword Matches", index=False)
         pd.DataFrame(db.get_keywords(False)).to_excel(writer, sheet_name="NAC Keyword Database Snapshot", index=False)
@@ -79,8 +95,14 @@ def export_potential_nac_pdf(results):
     rows = _potential_rows(results)
     path = _pdf_path("ringkasan_potensi_nac")
     title = "Ringkasan Potensi NAC Perlu Review"
-    columns = ["row_id", "item_per_rab", "matched_category", "correction_percentage_label", "transaction_type", "semantic_audit", "final_confidence", "confidence_label"]
-    headers = ["Row", "Nama Material", "Kategori NAC", "Prosentase NAC", "Type of Transaction", "Semantic Audit", "Confidence %", "Confidence Level"]
+    columns = [
+        "row_id", "item_per_rab", "selected_transaction_type", "correction_percentage_label",
+        "percentage_status", "context_audit", "final_confidence", "confidence_label", "decision_reason",
+    ]
+    headers = [
+        "Row", "Nama Material", "Type of Transaction", "Prosentase NAC", "Status Prosentase",
+        "Audit Konteks", "Confidence %", "Level", "Alasan Keputusan",
+    ]
     _write_pdf(path, title, rows, columns, headers)
     return str(path)
 
@@ -89,8 +111,14 @@ def export_all_materials_pdf(results):
     rows = _all_material_rows(results)
     path = _pdf_path("seluruh_material_rab")
     title = "Tabel Seluruh Material RAB"
-    columns = ["row_id", "item_per_rab", "matched_category", "correction_percentage_label", "transaction_type", "semantic_audit", "final_confidence", "confidence_label"]
-    headers = ["Row", "Nama Material", "Kategori NAC", "Prosentase NAC", "Type of Transaction", "Semantic Audit", "Confidence %", "Confidence Level"]
+    columns = [
+        "row_id", "item_per_rab", "selected_transaction_type", "correction_percentage_label",
+        "percentage_status", "context_audit", "final_confidence", "confidence_label", "decision_reason",
+    ]
+    headers = [
+        "Row", "Nama Material", "Type of Transaction", "Prosentase NAC", "Status Prosentase",
+        "Audit Konteks", "Confidence %", "Level", "Alasan Keputusan",
+    ]
     _write_pdf(path, title, rows, columns, headers)
     return str(path)
 
@@ -101,13 +129,28 @@ def export_all_materials_excel(results):
     frame = pd.DataFrame(_all_material_rows(results))
     columns = {
         "row_id": "Row",
+        "judul_rab": "Judul RAB",
+        "section": "Subjudul/Section",
         "item_per_rab": "Nama Material",
         "matched_category": "Kategori NAC",
+        "selected_transaction_type": "Type of Transaction",
+        "reference_percentage_label": "Prosentase Referensi",
         "correction_percentage_label": "Prosentase NAC",
-        "transaction_type": "Type of Transaction",
+        "percentage_status": "Status Prosentase",
+        "percentage_source": "Sumber Prosentase",
+        "alternative_transaction": "Alternatif Transaksi",
+        "alternative_percentage_label": "Alternatif Prosentase",
+        "title_match_keyword": "Match Judul",
+        "title_match_score": "Skor Judul",
+        "section_match_keyword": "Match Subjudul",
+        "section_match_score": "Skor Subjudul",
+        "item_match_keyword": "Match Item",
+        "item_match_score": "Skor Item",
+        "context_consistency_score": "Konsistensi Konteks %",
         "semantic_audit": "Semantic Audit",
         "final_confidence": "Confidence %",
         "confidence_label": "Confidence Level",
+        "decision_reason": "Alasan Keputusan",
     }
     frame = frame[list(columns)].rename(columns=columns) if not frame.empty else pd.DataFrame(columns=list(columns.values()))
     frame.to_excel(path, index=False)
@@ -132,7 +175,11 @@ def _all_material_rows(results):
 def _normalize_export_rows(frame):
     frame = frame.copy()
     for col in [
-        "row_id", "item_per_rab", "matched_category", "correction_percentage_label", "transaction_type",
+        "row_id", "judul_rab", "section", "item_per_rab", "matched_category", "correction_percentage_label",
+        "reference_percentage_label", "percentage_status", "percentage_source", "selected_transaction_type",
+        "alternative_transaction", "alternative_percentage_label", "title_match_keyword", "title_match_score",
+        "section_match_keyword", "section_match_score", "item_match_keyword", "item_match_score",
+        "context_consistency_score", "decision_reason",
         "semantic_candidate_text", "semantic_reason", "semantic_model", "final_confidence", "confidence_label",
     ]:
         if col not in frame.columns:
@@ -140,6 +187,7 @@ def _normalize_export_rows(frame):
     frame["item_per_rab"] = frame["item_per_rab"].fillna(frame.get("item_description", ""))
     frame["matched_category"] = frame["matched_category"].replace("", "-").fillna("-")
     frame["semantic_audit"] = frame.apply(_semantic_audit, axis=1)
+    frame["context_audit"] = frame.apply(_context_audit, axis=1)
     frame["final_confidence"] = pd.to_numeric(frame["final_confidence"], errors="coerce").fillna(0).round(2)
     frame["_row_sort"] = pd.to_numeric(frame["row_id"], errors="coerce")
     frame = frame.sort_values("_row_sort", na_position="last")
@@ -159,13 +207,20 @@ def _write_pdf(path, title, rows, columns, headers):
 
     styles = getSampleStyleSheet()
     doc = SimpleDocTemplate(str(path), pagesize=landscape(A4), leftMargin=24, rightMargin=24, topMargin=24, bottomMargin=24)
-    story = [Paragraph(title, styles["Title"]), Spacer(1, 12)]
+    story = [
+        Paragraph(title, styles["Title"]),
+        Paragraph(
+            "Prosentase NAC adalah aturan koreksi transaksi. Confidence adalah keyakinan klasifikasi dan tidak digunakan untuk menciptakan prosentase baru.",
+            styles["BodyText"],
+        ),
+        Spacer(1, 12),
+    ]
     data = [headers]
     for row in rows:
         data.append([_pdf_cell(row.get(col, "")) for col in columns])
     if len(data) == 1:
         data.append(["-"] + ["Tidak ada data"] + ["-"] * (len(headers) - 2))
-    default_widths = [34, 175, 90, 58, 130, 175, 58, 75]
+    default_widths = [28, 130, 100, 55, 82, 105, 52, 55, 105]
     table = Table(data, colWidths=default_widths[: len(headers)], repeatRows=1)
     table.setStyle(
         TableStyle(
@@ -197,3 +252,19 @@ def _semantic_audit(row):
     if candidate and reason:
         return f"{candidate}: {reason}"
     return candidate or reason
+
+
+def _context_audit(row):
+    evidence = []
+    for label, keyword_key, score_key in [
+        ("Judul", "title_match_keyword", "title_match_score"),
+        ("Subjudul", "section_match_keyword", "section_match_score"),
+        ("Item", "item_match_keyword", "item_match_score"),
+    ]:
+        keyword = str(row.get(keyword_key) or "").strip()
+        if keyword:
+            evidence.append(f"{label}: {keyword} ({float(row.get(score_key) or 0):.1f})")
+    consistency = float(row.get("context_consistency_score") or 0)
+    if consistency:
+        evidence.append(f"Konsistensi: {consistency:.1f}%")
+    return "; ".join(evidence) or "-"

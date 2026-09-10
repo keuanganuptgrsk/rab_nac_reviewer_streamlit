@@ -2,6 +2,16 @@
 
 Semua penambahan fitur harus dicatat dengan format: versi, judul, tanggal, dan keterangan.
 
+## v1.3.0 - Context-Aware Hierarchical NAC Review - 2026-09-10
+
+- Memisahkan deteksi `judul_rab`, `section/subjudul`, dan `item_per_rab` dengan bobot 15%, 25%, dan 60%.
+- Menambahkan agregasi kandidat transaksi dari exact keyword, sinonim, fuzzy, dan semantic per field.
+- Memisahkan Prosentase NAC sebagai aturan koreksi transaksi dari Confidence sebagai keyakinan klasifikasi.
+- Menahan penerapan prosentase saat kandidat berbeda sama-sama kuat dan menandainya sebagai `Perlu penentuan reviewer - Ambigu`.
+- Menambahkan audit match per field, konsistensi konteks, kandidat transaksi kedua, sumber prosentase, dan alasan keputusan.
+- Memperluas Review RAB, Analisa Redaksi, PDF, serta Excel dengan output context-aware dan export audit lengkap.
+- Memperkuat allowable/exception untuk konteks teknis pembangkit, gardu, transmisi, distribusi, operasi, dan pemeliharaan.
+
 ## v1.2.1 - Streamlit Cloud Build Reliability - 2026-09-08
 
 - Menghapus `packages.txt` agar build Streamlit Community Cloud tidak bergantung pada repository APT Debian.

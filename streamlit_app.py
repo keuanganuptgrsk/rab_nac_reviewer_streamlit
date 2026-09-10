@@ -11,7 +11,12 @@ from modules import db
 from modules import feedback_actions as actions
 from modules import review_flow
 from modules import ui_system as ui
-from modules.export_engine import export_all_materials_excel, export_all_materials_pdf, export_potential_nac_pdf
+from modules.export_engine import (
+    export_all_materials_excel,
+    export_all_materials_pdf,
+    export_potential_nac_pdf,
+    export_review_excel,
+)
 from modules.feedback_engine import learning_summary
 from modules.version import APP_RELEASE_NOTES, APP_RELEASE_TITLE, APP_VERSION, version_banner
 
@@ -30,6 +35,7 @@ def init_session() -> None:
         "export_potential_pdf": "",
         "export_all_pdf": "",
         "export_all_excel": "",
+        "export_review_excel": "",
         "keyword_export": "",
         "db_backup": "",
     }
@@ -61,7 +67,7 @@ def load_uploaded_file(uploaded_file) -> None:
     st.session_state.upload_message = loaded["message"]
     st.session_state.review_results = []
     st.session_state.review_message = ""
-    for key in ["export_potential_pdf", "export_all_pdf", "export_all_excel"]:
+    for key in ["export_potential_pdf", "export_all_pdf", "export_all_excel", "export_review_excel"]:
         st.session_state[key] = ""
 
 
@@ -151,6 +157,10 @@ def review_page() -> None:
             ("Manual review", metrics["manual"]),
         ]
     )
+    ui.status_note(
+        "Prosentase NAC adalah proporsi koreksi dari aturan transaksi. Confidence adalah tingkat keyakinan "
+        "klasifikasi berdasarkan item, subjudul, judul, allowable, dan exception; keduanya tidak memakai rumus yang sama."
+    )
 
     ui.section_label("Temuan prioritas")
     category_options = ["Semua"] + sorted(
@@ -181,7 +191,28 @@ def review_page() -> None:
         hide_index=True,
         height=ui.dataframe_height(findings),
         column_config={
-            "Confidence": st.column_config.ProgressColumn("Confidence", min_value=0, max_value=100, format="%.1f%%"),
+            "Prosentase NAC": st.column_config.TextColumn(
+                "Prosentase NAC",
+                help="Proporsi koreksi yang diterapkan dari aturan transaksi, bukan skor confidence.",
+            ),
+            "Prosentase Referensi": st.column_config.TextColumn(
+                "Prosentase Referensi",
+                help="Angka aturan pada keyword pack sebelum keputusan penerapan.",
+            ),
+            "Confidence": st.column_config.ProgressColumn(
+                "Confidence",
+                min_value=0,
+                max_value=100,
+                format="%.1f%%",
+                help="Keyakinan klasifikasi dari bukti hierarkis dan guard allowable/exception.",
+            ),
+            "Konsistensi Konteks": st.column_config.ProgressColumn(
+                "Konsistensi Konteks",
+                min_value=0,
+                max_value=100,
+                format="%.1f%%",
+                help="Keselarasan transaksi terpilih pada item, subjudul, dan judul.",
+            ),
         },
     )
 
@@ -193,7 +224,23 @@ def review_page() -> None:
             hide_index=True,
             height=ui.dataframe_height(all_items, 240, 620),
             column_config={
-                "Confidence %": st.column_config.ProgressColumn("Confidence %", min_value=0, max_value=100, format="%.1f%%"),
+                "Prosentase NAC": st.column_config.TextColumn(
+                    "Prosentase NAC",
+                    help="Proporsi koreksi yang diterapkan dari aturan transaksi, bukan skor confidence.",
+                ),
+                "Confidence %": st.column_config.ProgressColumn(
+                    "Confidence %",
+                    min_value=0,
+                    max_value=100,
+                    format="%.1f%%",
+                    help="Keyakinan klasifikasi dari bukti hierarkis dan guard allowable/exception.",
+                ),
+                "Konsistensi Konteks": st.column_config.ProgressColumn(
+                    "Konsistensi Konteks",
+                    min_value=0,
+                    max_value=100,
+                    format="%.1f%%",
+                ),
             },
         )
 
@@ -230,7 +277,7 @@ def feedback_panel(results: list[dict]) -> None:
 
 def export_panel(results: list[dict]) -> None:
     ui.section_label("Export hasil")
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4 = st.columns(4)
     with c1:
         if st.button("Buat PDF Potensi NAC", width="stretch"):
             st.session_state.export_potential_pdf = export_potential_nac_pdf(results)
@@ -255,20 +302,45 @@ def export_panel(results: list[dict]) -> None:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 width="stretch",
             )
+    with c4:
+        if st.button("Buat Excel Audit Lengkap", width="stretch"):
+            st.session_state.export_review_excel = export_review_excel(results)
+        if st.session_state.get("export_review_excel"):
+            data, name = ui.file_download(st.session_state.export_review_excel)
+            st.download_button(
+                "Download Excel Audit Lengkap",
+                data,
+                file_name=name,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                width="stretch",
+            )
 
 
 def redaction_page() -> None:
-    ui.hero(APP_VERSION, APP_RELEASE_TITLE, "Analisa satu kalimat redaksi RAB sebelum dimasukkan ke dokumen.", current_metrics())
+    ui.hero(
+        APP_VERSION,
+        APP_RELEASE_TITLE,
+        "Uji redaksi RAB dengan konteks judul, subjudul, dan item sebelum dokumen direview.",
+        current_metrics(),
+    )
+    title_text = st.text_input(
+        "Judul RAB",
+        placeholder="Contoh: Pemeliharaan jaringan distribusi",
+    )
+    section_text = st.text_input(
+        "Subjudul / section pekerjaan",
+        placeholder="Contoh: Material pekerjaan teknis",
+    )
     text = st.text_area(
-        "Redaksi RAB",
-        placeholder="Contoh: biaya konsumsi rapat koordinasi",
+        "Redaksi item / material",
+        placeholder="Contoh: Kabel penghantar 150 mm",
         height=130,
     )
     if not text.strip():
         ui.empty_state("Ketik satu kalimat redaksi untuk melihat potensi NAC, keyword, dan saran klarifikasi.")
         return
 
-    result = review_flow.analyze_redaction(text)
+    result = review_flow.analyze_redaction(text, title_text, section_text)
     if not result:
         ui.empty_state("Belum ada hasil analisa.")
         return
@@ -278,19 +350,23 @@ def redaction_page() -> None:
     category = result.get("matched_category") or "Tidak ada kategori kuat"
     keyword = result.get("matched_keyword") or "-"
     percentage = result.get("correction_percentage_label") or "-"
-    transaction_type = result.get("transaction_type") or "-"
+    transaction_type = result.get("selected_transaction_type") or "-"
+    reference_percentage = result.get("reference_percentage_label") or "-"
+    percentage_status = result.get("percentage_status") or "Tidak teridentifikasi"
     semantic_candidate = result.get("semantic_candidate_text") or "-"
     semantic_reason = result.get("semantic_reason") or ""
     st.markdown(
         f"""
 <div class="hero-panel">
-  <div class="hero-panel-title">Potensi NAC</div>
+  <div class="hero-panel-title">Confidence klasifikasi</div>
   <div class="hero-panel-number">{score:.1f}%</div>
   <div>{ui.confidence_pill(label)}</div>
   <div class="hero-panel-line"></div>
   <div class="hero-panel-copy"><strong>Kategori:</strong> {html.escape(category)}</div>
   <div class="hero-panel-copy"><strong>Keyword:</strong> {html.escape(keyword)}</div>
   <div class="hero-panel-copy"><strong>Prosentase NAC:</strong> {html.escape(percentage)}</div>
+  <div class="hero-panel-copy"><strong>Prosentase Referensi:</strong> {html.escape(reference_percentage)}</div>
+  <div class="hero-panel-copy"><strong>Status Prosentase:</strong> {html.escape(percentage_status)}</div>
   <div class="hero-panel-copy"><strong>Type of Transaction:</strong> {html.escape(transaction_type)}</div>
   <div class="hero-panel-copy"><strong>Kandidat Semantic:</strong> {html.escape(semantic_candidate)}</div>
 </div>
@@ -301,6 +377,44 @@ def redaction_page() -> None:
     ui.status_note(result.get("explanation", ""))
     if semantic_reason:
         st.caption(f"Semantic audit: {semantic_reason}")
+    ui.section_label("Bukti hierarkis")
+    context_audit = pd.DataFrame(
+        [
+            {
+                "Field": "Judul RAB (15%)",
+                "Redaksi": title_text or "-",
+                "Kandidat": result.get("title_match_keyword") or "-",
+                "Skor": float(result.get("title_match_score") or 0),
+            },
+            {
+                "Field": "Subjudul / section (25%)",
+                "Redaksi": section_text or "-",
+                "Kandidat": result.get("section_match_keyword") or "-",
+                "Skor": float(result.get("section_match_score") or 0),
+            },
+            {
+                "Field": "Item / material (60%)",
+                "Redaksi": text,
+                "Kandidat": result.get("item_match_keyword") or "-",
+                "Skor": float(result.get("item_match_score") or 0),
+            },
+        ]
+    )
+    st.dataframe(
+        context_audit,
+        width="stretch",
+        hide_index=True,
+        column_config={
+            "Skor": st.column_config.ProgressColumn("Skor", min_value=0, max_value=100, format="%.1f%%"),
+        },
+    )
+    ui.section_label("Keputusan transaksi")
+    ui.status_note(result.get("decision_reason") or "Belum ada keputusan transaksi.")
+    if result.get("alternative_transaction"):
+        st.caption(
+            f"Kandidat kedua: {result['alternative_transaction']} "
+            f"({result.get('alternative_percentage_label') or 'prosentase belum tersedia'})."
+        )
     st.markdown("Saran klarifikasi")
     st.info(result.get("redaction_suggestion") or "Tidak ada saran khusus.")
 
@@ -599,7 +713,7 @@ def settings_page() -> None:
         st.markdown(version_banner())
         st.markdown(
             """
-Rilis ini memakai tag git `v1.2.1`. Untuk rollback lokal, gunakan tag stabil dari GitHub atau jalankan `git checkout v1.2.0` pada salinan repo. Untuk Streamlit Cloud, deploy ulang branch atau tag yang ingin dipakai.
+Rilis ini memakai tag git `v1.3.0`. Untuk rollback lokal, gunakan tag stabil dari GitHub atau jalankan `git checkout v1.2.1` pada salinan repo. Untuk Streamlit Cloud, deploy ulang branch atau tag yang ingin dipakai.
 """
         )
 

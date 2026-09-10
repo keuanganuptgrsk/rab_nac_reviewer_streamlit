@@ -43,6 +43,18 @@ def safe_filename(name: str) -> str:
     return cleaned.strip("._") or "upload"
 
 
+def _context_value(value: Any, fallback: str = "") -> str:
+    if value is None:
+        return fallback
+    try:
+        if pd.isna(value):
+            return fallback
+    except (TypeError, ValueError):
+        pass
+    text = str(value).strip()
+    return text or fallback
+
+
 def save_uploaded_file(uploaded_file: Any, upload_dir: Path | None = None) -> Path:
     upload_dir = upload_dir or UPLOAD_DIR
     upload_dir.mkdir(parents=True, exist_ok=True)
@@ -168,19 +180,33 @@ def build_items(
     if upload_state.get("kind") == "table":
         frame = pd.DataFrame(upload_state["data"])
         combined = combine_selected_text_columns(frame, text_columns or [])
+        detected = upload_state.get("detected", {})
+        title_col = detected.get("work_title")
+        item_col = detected.get("material_service_name") or detected.get("description")
         items = []
         for idx, text in combined.items():
             row = frame.loc[idx]
+            title_text = _context_value(row.get("judul_rab"))
+            if not title_text and title_col:
+                title_text = _context_value(row.get(title_col))
+            section_text = _context_value(row.get("section"))
+            item_text = _context_value(row.get("item_per_rab"))
+            if not item_text and item_col:
+                item_text = _context_value(row.get(item_col))
+            item_text = item_text or _context_value(text)
+            original_text = _context_value(text) or " | ".join(
+                part for part in (title_text, section_text, item_text) if part
+            )
             items.append(
                 {
                     "row_id": str(row.get("row_id", idx + 1)),
                     "source_file": path.name,
                     "page_or_sheet": row.get("sheet", upload_state.get("sheet", "")),
-                    "original_text": text,
-                    "item_description": text,
-                    "judul_rab": row.get("judul_rab", ""),
-                    "item_per_rab": row.get("item_per_rab", text),
-                    "section": row.get("section", ""),
+                    "original_text": original_text,
+                    "item_description": item_text,
+                    "judul_rab": title_text,
+                    "item_per_rab": item_text,
+                    "section": section_text,
                     "volume": row.get(volume_col, "") if volume_col else "",
                     "unit": row.get(unit_col, "") if unit_col else "",
                     "unit_price": row.get(unit_price_col, "") if unit_price_col else "",
@@ -252,7 +278,7 @@ def run_review(
     return results, f"Review selesai. {msg} {DISCLAIMER}"
 
 
-def analyze_redaction(text: str) -> dict[str, Any] | None:
+def analyze_redaction(text: str, judul_rab: str = "", section: str = "") -> dict[str, Any] | None:
     text = str(text or "").strip()
     if not text:
         return None
@@ -264,6 +290,8 @@ def analyze_redaction(text: str) -> dict[str, Any] | None:
             "original_text": text,
             "item_description": text,
             "item_per_rab": text,
+            "judul_rab": str(judul_rab or "").strip(),
+            "section": str(section or "").strip(),
         },
         db.get_settings(),
     )
@@ -275,43 +303,66 @@ def review_summary_dataframe(results: list[dict[str, Any]] | None) -> pd.DataFra
         return pd.DataFrame(
             columns=[
                 "Row",
-                "File",
-                "Sheet",
-                "Judul",
-                "Bagian",
                 "Item per RAB",
+                "Prosentase NAC",
+                "Status Prosentase",
+                "Confidence",
+                "Confidence Level",
+                "Type of Transaction",
                 "Kategori",
                 "Keyword",
-                "Prosentase NAC",
-                "Type of Transaction",
+                "Judul",
+                "Bagian",
+                "Konsistensi Konteks",
+                "Match Item",
+                "Skor Item",
+                "Match Subjudul",
+                "Skor Subjudul",
+                "Match Judul",
+                "Skor Judul",
+                "Prosentase Referensi",
+                "Alternatif Transaksi",
+                "Alternatif Prosentase",
                 "Tipe Deteksi",
                 "Kandidat Semantic",
                 "Alasan Semantic",
-                "Confidence",
-                "Confidence Level",
+                "Alasan Keputusan",
                 "Alasan Deteksi",
                 "Sugesti Perubahan Redaksi",
+                "File",
+                "Sheet",
             ]
         )
-    frame = frame[frame["confidence_label"].isin(["Sedang", "Tinggi", "Sangat tinggi"])].copy()
     columns = [
         "row_id",
-        "source_file",
-        "page_or_sheet",
-        "judul_rab",
-        "section",
         "item_per_rab",
+        "correction_percentage_label",
+        "percentage_status",
+        "final_confidence",
+        "confidence_label",
+        "selected_transaction_type",
         "matched_category",
         "matched_keyword",
-        "correction_percentage_label",
-        "transaction_type",
+        "judul_rab",
+        "section",
+        "context_consistency_score",
+        "item_match_keyword",
+        "item_match_score",
+        "section_match_keyword",
+        "section_match_score",
+        "title_match_keyword",
+        "title_match_score",
+        "reference_percentage_label",
+        "alternative_transaction",
+        "alternative_percentage_label",
         "match_type",
         "semantic_candidate_text",
         "semantic_reason",
-        "final_confidence",
-        "confidence_label",
+        "decision_reason",
         "explanation",
         "redaction_suggestion",
+        "source_file",
+        "page_or_sheet",
     ]
     for col in columns:
         if col not in frame.columns:
@@ -327,13 +378,25 @@ def review_summary_dataframe(results: list[dict[str, Any]] | None) -> pd.DataFra
             "matched_category": "Kategori",
             "matched_keyword": "Keyword",
             "correction_percentage_label": "Prosentase NAC",
-            "transaction_type": "Type of Transaction",
+            "reference_percentage_label": "Prosentase Referensi",
+            "percentage_status": "Status Prosentase",
+            "selected_transaction_type": "Type of Transaction",
+            "context_consistency_score": "Konsistensi Konteks",
+            "title_match_keyword": "Match Judul",
+            "title_match_score": "Skor Judul",
+            "section_match_keyword": "Match Subjudul",
+            "section_match_score": "Skor Subjudul",
+            "item_match_keyword": "Match Item",
+            "item_match_score": "Skor Item",
+            "alternative_transaction": "Alternatif Transaksi",
+            "alternative_percentage_label": "Alternatif Prosentase",
             "match_type": "Tipe Deteksi",
             "semantic_candidate_text": "Kandidat Semantic",
             "semantic_reason": "Alasan Semantic",
             "final_confidence": "Confidence",
             "confidence_label": "Confidence Level",
             "explanation": "Alasan Deteksi",
+            "decision_reason": "Alasan Keputusan",
             "redaction_suggestion": "Sugesti Perubahan Redaksi",
         }
     )
@@ -342,20 +405,38 @@ def review_summary_dataframe(results: list[dict[str, Any]] | None) -> pd.DataFra
 def all_materials_dataframe(results: list[dict[str, Any]] | None) -> pd.DataFrame:
     frame = pd.DataFrame(results or [])
     columns = [
-        "row_id", "item_per_rab", "matched_category", "correction_percentage_label",
-        "transaction_type", "match_type", "semantic_candidate_text", "semantic_reason", "final_confidence", "confidence_label",
+        "row_id", "item_per_rab", "correction_percentage_label", "percentage_status", "final_confidence",
+        "confidence_label", "selected_transaction_type", "matched_category", "judul_rab", "section",
+        "context_consistency_score", "item_match_keyword", "item_match_score", "section_match_keyword",
+        "section_match_score", "title_match_keyword", "title_match_score", "reference_percentage_label",
+        "alternative_transaction", "alternative_percentage_label", "match_type", "semantic_candidate_text",
+        "semantic_reason", "decision_reason",
     ]
     labels = {
         "row_id": "Row",
+        "judul_rab": "Judul RAB",
+        "section": "Subjudul / Section",
         "item_per_rab": "Item RAB",
         "matched_category": "Kategori NAC",
         "correction_percentage_label": "Prosentase NAC",
-        "transaction_type": "Type of Transaction",
+        "reference_percentage_label": "Prosentase Referensi",
+        "percentage_status": "Status Prosentase",
+        "selected_transaction_type": "Type of Transaction",
+        "context_consistency_score": "Konsistensi Konteks",
+        "title_match_keyword": "Match Judul",
+        "title_match_score": "Skor Judul",
+        "section_match_keyword": "Match Subjudul",
+        "section_match_score": "Skor Subjudul",
+        "item_match_keyword": "Match Item",
+        "item_match_score": "Skor Item",
+        "alternative_transaction": "Alternatif Transaksi",
+        "alternative_percentage_label": "Alternatif Prosentase",
         "match_type": "Tipe Deteksi",
         "semantic_candidate_text": "Kandidat Semantic",
         "semantic_reason": "Alasan Semantic",
         "final_confidence": "Confidence %",
         "confidence_label": "Confidence Level",
+        "decision_reason": "Alasan Keputusan",
     }
     if frame.empty:
         return pd.DataFrame(columns=list(labels.values()))

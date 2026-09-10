@@ -2,16 +2,16 @@
 
 RAB NAC Reviewer adalah aplikasi Streamlit untuk membantu reviewer finance melakukan review awal dokumen RAB dan mendeteksi potensi NAC. Aplikasi ini tidak menggantikan keputusan reviewer; hasil deteksi wajib divalidasi terhadap PMK, kebijakan internal, dan konteks pekerjaan.
 
-Versi aktif: `v1.2.1 - Streamlit Cloud Build Reliability`.
+Versi aktif: `v1.3.0 - Context-Aware Hierarchical NAC Review`.
 
 ## Fitur
 
 - Upload RAB Excel, CSV, PDF digital, PDF scan, dan gambar.
 - Parser Excel RAB Indonesia dengan dukungan judul pekerjaan, section, item, volume, satuan, harga satuan, dan total.
-- Deteksi NAC hybrid: exact keyword, sinonim, fuzzy matching, semantic matching Bahasa Indonesia opsional, allowable competitor, exception, dan feedback historis.
+- Deteksi NAC context-aware: exact keyword, sinonim, fuzzy, dan semantic dinilai terpisah pada item, subjudul, serta judul.
 - Database SQLite lokal untuk keyword NAC 2026 Kategori A/B, sinonim, allowable keyword, exception, settings, dan feedback.
-- Output review menampilkan `Prosentase NAC` dan `Type of Transaction` dari pack keyword.
-- Export PDF ringkasan potensi NAC, PDF seluruh material, Excel seluruh material, dan database keyword.
+- Output review memisahkan `Prosentase NAC` sebagai aturan koreksi dan `Confidence` sebagai keyakinan klasifikasi.
+- Export PDF ringkasan potensi NAC, PDF seluruh material, Excel seluruh material, Excel audit lengkap, dan database keyword.
 - Backup dan restore SQLite dari UI.
 - Bulk nonaktifkan, restore, dan hapus permanen keyword NAC dari tabel checkbox.
 - Siap deploy ke Streamlit Community Cloud gratis.
@@ -24,10 +24,23 @@ Versi aktif: `v1.2.1 - Streamlit Cloud Build Reliability`.
 4. Cek pesan deteksi kolom dan preview data.
 5. Tekan `Run NAC Review`.
 6. Baca tabel `Temuan prioritas` untuk item confidence `Sedang`, `Tinggi`, dan `Sangat tinggi`.
-7. Cek `Prosentase NAC` dan `Type of Transaction` untuk melihat proporsi koreksi dan klasifikasi transaksi.
-8. Buka `Tabel seluruh item RAB` untuk melihat semua material, termasuk confidence rendah.
-9. Isi `Feedback reviewer` bila ada false positive, false negative, atau sinonim baru.
-10. Gunakan bagian `Export hasil` untuk membuat PDF atau Excel dokumentasi review.
+7. Cek `Prosentase NAC`, `Status Prosentase`, dan `Type of Transaction` untuk melihat aturan koreksi yang diterapkan.
+8. Baca `Confidence`, bukti match judul/subjudul/item, dan alasan keputusan sebagai audit keyakinan sistem.
+9. Buka `Tabel seluruh item RAB` untuk melihat semua material, termasuk confidence rendah.
+10. Isi `Feedback reviewer` bila ada false positive, false negative, atau sinonim baru.
+11. Gunakan bagian `Export hasil` untuk membuat PDF atau Excel dokumentasi review.
+
+## Cara Kerja Review Hierarkis
+
+- `item_per_rab` adalah bukti utama dengan bobot 60%.
+- `section/subjudul` memberi konteks 25%.
+- `judul_rab` memberi konteks 15%.
+- Dukungan transaksi yang sama pada beberapa field menaikkan konsistensi; kandidat berbeda memberi penalti konflik.
+- Judul yang mengandung redaksi NAC tidak otomatis menjadikan seluruh item di bawahnya NAC. Tanpa bukti pada item, confidence dibatasi dan prosentase tidak diterapkan.
+- Konteks teknis seperti pembangkit, gardu, transmisi, distribusi, operasi, dan pemeliharaan tetap dinilai melalui allowable/exception.
+- Bila dua transaksi kuat memiliki prosentase berbeda, hasil ditandai `Perlu penentuan reviewer - Ambigu` tanpa angka tebakan.
+
+`Prosentase NAC` selalu berasal dari `correction_percentage` keyword pack/PPT. Semantic score dan Confidence tidak pernah digunakan untuk menciptakan prosentase baru.
 
 ## Keyword Pack NAC 2026
 
@@ -137,13 +150,13 @@ Roadmap dan catatan teknis semantic berada di [docs/semantic_similarity_indonesi
 
 ## Versioning dan Rollback
 
-Rilis ini ditandai sebagai tag git `v1.2.1`.
+Rilis ini ditandai sebagai tag git `v1.3.0`.
 
 Rollback lokal:
 
 ```powershell
 git fetch --tags
-git checkout v1.2.0
+git checkout v1.2.1
 ```
 
 Rollback deploy Streamlit Cloud:
