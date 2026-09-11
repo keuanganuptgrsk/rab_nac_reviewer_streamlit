@@ -12,3 +12,6 @@ plotly>=5.24,<7.0
 reportlab>=4.2,<5.0
 pytesseract>=0.3.13,<0.4
 sentence-transformers>=3.0,<6.0
+openai>=3.11,<4
+google-genai>=2.22,<3
+pydantic>=2,<3

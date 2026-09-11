@@ -1,6 +1,7 @@
 import os
 import shutil
 import sqlite3
+import uuid
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -459,14 +460,71 @@ def get_feedback():
 
 def backup_db(destination=None):
     destination = Path(destination or (DATA_DIR / f"app_backup_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.db"))
+    destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(DB_PATH, destination)
     return str(destination)
 
 
 def restore_db(src_path):
-    shutil.copy2(src_path, DB_PATH)
-    init_db()
+    source = Path(src_path)
+    if not source.exists() or source.stat().st_size < 100:
+        raise ValueError("File backup SQLite kosong atau tidak ditemukan.")
+    with source.open("rb") as handle:
+        if handle.read(16) != b"SQLite format 3\x00":
+            raise ValueError("File restore bukan database SQLite yang valid.")
+    _validate_restore_schema(source)
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    staging = DB_PATH.with_name(f".{DB_PATH.name}.{uuid.uuid4().hex}.staging")
+    rollback = DB_PATH.with_name(f".{DB_PATH.name}.{uuid.uuid4().hex}.rollback")
+    shutil.copy2(source, staging)
+    had_current = DB_PATH.exists()
+    try:
+        if had_current:
+            shutil.copy2(DB_PATH, rollback)
+        os.replace(staging, DB_PATH)
+        init_db()
+        _validate_restore_schema(DB_PATH)
+    except Exception:
+        if had_current and rollback.exists():
+            os.replace(rollback, DB_PATH)
+        elif DB_PATH.exists():
+            DB_PATH.unlink()
+        raise
+    finally:
+        for temporary in (staging, rollback):
+            if temporary.exists():
+                temporary.unlink()
     return str(DB_PATH)
+
+
+def _validate_restore_schema(path):
+    required = {
+        "nac_keywords": {"id", "keyword", "status", "correction_percentage", "transaction_type"},
+        "nac_synonyms": {"id", "nac_keyword_id", "synonym", "status"},
+        "allowable_keywords": {"id", "keyword", "status"},
+        "exceptions": {"id", "pattern", "status"},
+        "feedback": {"id", "row_id", "original_text", "feedback_type"},
+        "settings": {"key", "value"},
+    }
+    connection = sqlite3.connect(path)
+    try:
+        integrity = connection.execute("PRAGMA integrity_check").fetchone()
+        if not integrity or integrity[0] != "ok":
+            raise ValueError("Integrity check SQLite gagal.")
+        tables = {
+            row[0]
+            for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+        }
+        missing_tables = sorted(set(required) - tables)
+        if missing_tables:
+            raise ValueError("Tabel wajib tidak ditemukan: " + ", ".join(missing_tables))
+        for table, columns in required.items():
+            existing = {row[1] for row in connection.execute(f"PRAGMA table_info({table})").fetchall()}
+            missing_columns = sorted(columns - existing)
+            if missing_columns:
+                raise ValueError(f"Kolom wajib {table} tidak ditemukan: {', '.join(missing_columns)}")
+    finally:
+        connection.close()
 
 
 def reset_demo_database():

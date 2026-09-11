@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
+import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -15,15 +18,19 @@ from .excel_loader import (
     load_rab_excel_items,
     normalize_dataframe,
 )
-from .nac_detector import detect_item, detect_items
+from .adaptive_parser import parse_document, preview_dataframe
+from .nac_detector import build_detection_resources, detect_item, detect_items, trusted_rule_candidates
 from .ocr_engine import extract_text_from_image, extract_text_from_pdf_scan, ocr_runtime_status
-from .pdf_loader import extract_text_from_pdf
+from .pdf_loader import extract_text_from_pdf, ocr_text_document, parse_pdf_document
+from .providers import provider_runtime_status, review_with_provider, test_provider_connection
 from . import vector_indexer
 
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 UPLOAD_DIR = Path(os.environ.get("RAB_NAC_UPLOAD_DIR", BASE_DIR / "runtime" / "uploads"))
 SUPPORTED_EXTENSIONS = [".xlsx", ".xls", ".csv", ".pdf", ".png", ".jpg", ".jpeg"]
+MAX_UPLOAD_BYTES = int(os.environ.get("RAB_NAC_MAX_UPLOAD_MB", "100")) * 1024 * 1024
+UPLOAD_TTL_SECONDS = 24 * 60 * 60
 SEMANTIC_MODEL_OPTIONS = {
     "LazarusNLP/all-indo-e5-small-v4": "LazarusNLP/all-indo-e5-small-v4",
     "intfloat/multilingual-e5-small": "intfloat/multilingual-e5-small",
@@ -55,17 +62,88 @@ def _context_value(value: Any, fallback: str = "") -> str:
     return text or fallback
 
 
-def save_uploaded_file(uploaded_file: Any, upload_dir: Path | None = None) -> Path:
+def save_uploaded_file(
+    uploaded_file: Any,
+    upload_dir: Path | None = None,
+    session_id: str | None = None,
+) -> Path:
     upload_dir = upload_dir or UPLOAD_DIR
-    upload_dir.mkdir(parents=True, exist_ok=True)
+    cleanup_stale_uploads(upload_dir)
+    session_dir = upload_dir / (safe_filename(session_id) if session_id else uuid.uuid4().hex)
+    session_dir.mkdir(parents=True, exist_ok=True)
     name = safe_filename(getattr(uploaded_file, "name", "upload"))
-    path = upload_dir / name
     data = uploaded_file.getbuffer() if hasattr(uploaded_file, "getbuffer") else uploaded_file.read()
-    path.write_bytes(bytes(data))
+    raw = bytes(data)
+    if len(raw) > MAX_UPLOAD_BYTES:
+        raise ValueError(f"Ukuran file melebihi batas {MAX_UPLOAD_BYTES // (1024 * 1024)} MB.")
+    suffix = Path(name).suffix.lower()
+    if suffix not in SUPPORTED_EXTENSIONS:
+        raise ValueError("Format file tidak didukung.")
+    _validate_file_signature(raw, suffix)
+    path = session_dir / name
+    path.write_bytes(raw)
     return path
 
 
-def load_uploaded_path(file_path: str | Path) -> dict[str, Any]:
+def save_database_upload(
+    uploaded_file: Any,
+    upload_dir: Path | None = None,
+    session_id: str | None = None,
+) -> Path:
+    upload_dir = upload_dir or UPLOAD_DIR
+    cleanup_stale_uploads(upload_dir)
+    session_dir = upload_dir / (safe_filename(session_id) if session_id else uuid.uuid4().hex)
+    session_dir.mkdir(parents=True, exist_ok=True)
+    name = safe_filename(getattr(uploaded_file, "name", "restore.db"))
+    if Path(name).suffix.lower() not in {".db", ".sqlite", ".sqlite3"}:
+        raise ValueError("Ekstensi backup SQLite tidak didukung.")
+    data = uploaded_file.getbuffer() if hasattr(uploaded_file, "getbuffer") else uploaded_file.read()
+    raw = bytes(data)
+    if len(raw) > MAX_UPLOAD_BYTES:
+        raise ValueError(f"Ukuran backup melebihi batas {MAX_UPLOAD_BYTES // (1024 * 1024)} MB.")
+    if not raw.startswith(b"SQLite format 3\x00"):
+        raise ValueError("File restore bukan database SQLite yang valid.")
+    path = session_dir / name
+    path.write_bytes(raw)
+    return path
+
+
+def cleanup_stale_uploads(upload_dir: Path | None = None, ttl_seconds: int = UPLOAD_TTL_SECONDS) -> None:
+    upload_dir = upload_dir or UPLOAD_DIR
+    if not upload_dir.exists():
+        return
+    cutoff = time.time() - ttl_seconds
+    for child in upload_dir.iterdir():
+        try:
+            if child.is_dir() and child.stat().st_mtime < cutoff:
+                shutil.rmtree(child)
+            elif child.is_file() and child.stat().st_mtime < cutoff:
+                child.unlink()
+        except OSError:
+            continue
+
+
+def _validate_file_signature(data: bytes, suffix: str) -> None:
+    signatures = {
+        ".xlsx": (b"PK\x03\x04",),
+        ".xls": (b"\xd0\xcf\x11\xe0",),
+        ".pdf": (b"%PDF",),
+        ".png": (b"\x89PNG\r\n\x1a\n",),
+        ".jpg": (b"\xff\xd8\xff",),
+        ".jpeg": (b"\xff\xd8\xff",),
+    }
+    expected = signatures.get(suffix)
+    if expected and not any(data.startswith(prefix) for prefix in expected):
+        raise ValueError("Isi file tidak sesuai dengan ekstensi yang dipilih.")
+    if suffix == ".csv" and b"\x00" in data[:8192]:
+        raise ValueError("CSV mengandung data biner dan tidak dapat diproses.")
+
+
+def load_uploaded_path(
+    file_path: str | Path,
+    manual_mappings: dict[str, dict[str, Any]] | None = None,
+    confirm_low_confidence: bool = False,
+) -> dict[str, Any]:
     path = Path(file_path)
     suffix = path.suffix.lower()
     empty_mapping = {"choices": [], "value": None}
@@ -81,89 +159,86 @@ def load_uploaded_path(file_path: str | Path) -> dict[str, Any]:
         }
 
     if suffix in [".xlsx", ".xls", ".csv"]:
-        loaded = load_excel_or_csv(path)
-        frame = normalize_dataframe(loaded["dataframe"])
-        detected = detect_columns(frame)
-        generic_text_hit = any(key in detected for key in ("work_title", "description", "material_service_name", "notes"))
-        if suffix in [".xlsx", ".xls"] and not generic_text_hit:
-            rab_items = load_rab_excel_items(path)
-            if rab_items is not None and not rab_items.empty:
-                frame = normalize_dataframe(rab_items)
-                loaded = {
-                    "sheet": "RAB/REALISASI",
-                    "warning": "Format RAB terdeteksi. Review memakai Judul dan Item per RAB.",
-                }
-        detected = detect_columns(frame)
-        columns = list(frame.columns)
-        text_defaults = ["review_text"] if "review_text" in columns else [
-            col
-            for key, col in detected.items()
-            if key in ("work_title", "description", "material_service_name", "notes")
-        ]
-        text_defaults = text_defaults or columns[:1]
-        state = {
-            "kind": "table",
-            "path": str(path),
-            "sheet": loaded["sheet"],
-            "data": frame.to_dict("records"),
-            "columns": columns,
-            "detected": detected,
-        }
-        msg = f"{loaded.get('warning', '')} Kolom terdeteksi: {detected}"
-        return {
-            "preview": frame.head(30),
-            "columns": columns,
-            "text_defaults": text_defaults,
-            "detected": detected,
-            "mapping": {
-                "volume": {"choices": columns, "value": detected.get("volume")},
-                "unit": {"choices": columns, "value": detected.get("unit")},
-                "unit_price": {"choices": columns, "value": detected.get("unit_price")},
-                "total_price": {"choices": columns, "value": detected.get("total_price")},
-            },
-            "message": msg.strip(),
-            "state": state,
-        }
+        document = parse_document(path, manual_mappings)
+        if confirm_low_confidence:
+            document.review_blocked = False
+        return _document_upload_payload(path, document)
 
     if suffix == ".pdf":
-        chunks, warning, scanned = extract_text_from_pdf(path)
+        document = parse_pdf_document(path, manual_mappings)
         settings = db.get_settings()
-        if scanned:
+        if not document.items:
             ocr_text, ocr_note = extract_text_from_pdf_scan(path, settings.get("ocr_mode", "auto"))
             if ocr_text.strip():
-                chunks = [{"page_or_sheet": "OCR PDF", "text": ocr_text}]
-                warning = ocr_note
+                document = ocr_text_document(path, ocr_text, "OCR PDF")
+                document.warnings.append(ocr_note)
             else:
-                warning = f"{warning} {ocr_note}".strip()
-        frame = pd.DataFrame(chunks)
-        state = {
-            "kind": "chunks",
-            "path": str(path),
-            "data": chunks,
-            "source_quality": "ocr" if scanned else "digital_pdf",
-        }
-        return {
-            "preview": frame,
-            "columns": ["text"],
-            "text_defaults": ["text"],
-            "detected": {},
-            "mapping": {key: empty_mapping for key in ["volume", "unit", "unit_price", "total_price"]},
-            "message": warning,
-            "state": state,
-        }
+                document.warnings.append(ocr_note)
+        if confirm_low_confidence:
+            document.review_blocked = False
+        return _document_upload_payload(path, document)
 
     text, note = extract_text_from_image(path, db.get_settings().get("ocr_mode", "auto"))
-    chunks = [{"page_or_sheet": "Image OCR", "text": text}] if text else []
-    frame = pd.DataFrame(chunks)
-    return {
-        "preview": frame,
-        "columns": ["text"],
-        "text_defaults": ["text"],
-        "detected": {},
-        "mapping": {key: empty_mapping for key in ["volume", "unit", "unit_price", "total_price"]},
-        "message": note,
-        "state": {"kind": "chunks", "path": str(path), "data": chunks, "source_quality": "ocr"},
+    document = ocr_text_document(path, text, "Image OCR")
+    document.warnings.append(note)
+    if confirm_low_confidence:
+        document.review_blocked = False
+    return _document_upload_payload(path, document)
+
+
+def _document_upload_payload(path: Path, document: Any) -> dict[str, Any]:
+    preview = preview_dataframe(document).head(100)
+    state = {
+        "kind": "canonical",
+        "path": str(path),
+        "data": [item.to_dict() for item in document.items],
+        "items": [item.to_dict() for item in document.items],
+        "regions": [region.to_dict() for region in document.regions],
+        "warnings": document.warnings,
+        "review_blocked": document.review_blocked,
+        "source_quality": document.source_quality,
+        "parser_strategy": document.parser_strategy,
+        "columns": list(preview.columns),
+        "detected": {
+            "description": "item_per_rab",
+            "work_title": "judul_rab",
+            "volume": "volume",
+            "unit": "unit",
+            "unit_price": "unit_price",
+            "total_price": "total_price",
+        },
     }
+    labels = ", ".join(
+        f"{region.diagnostic.region_id}: {region.diagnostic.confidence_label} {region.diagnostic.confidence:.1f}%"
+        for region in document.regions
+    ) or "tidak ada region"
+    warnings = sum(len(region.diagnostic.warnings) for region in document.regions) + len(document.warnings)
+    blocked = " Review diblokir sampai mapping dikonfirmasi." if document.review_blocked else ""
+    extracted = " Berhasil ekstrak teks PDF digital." if document.source_quality == "digital_pdf" else ""
+    return {
+        "preview": preview,
+        "columns": list(preview.columns),
+        "text_defaults": ["item_per_rab"],
+        "detected": state["detected"],
+        "mapping": {},
+        "message": (
+            f"Parser adaptif menemukan {len(document.items)} item pada {len(document.regions)} region. "
+            f"Confidence struktur: {labels}. Warning: {warnings}.{extracted}{blocked}"
+        ),
+        "state": state,
+    }
+
+
+def reload_with_manual_mapping(
+    upload_state: dict[str, Any],
+    manual_mappings: dict[str, dict[str, Any]],
+    confirm_low_confidence: bool = False,
+) -> dict[str, Any]:
+    return load_uploaded_path(
+        upload_state.get("path", ""),
+        manual_mappings=manual_mappings,
+        confirm_low_confidence=confirm_low_confidence,
+    )
 
 
 def build_items(
@@ -177,6 +252,11 @@ def build_items(
     if not upload_state:
         return [], "Upload file dahulu."
     path = Path(upload_state.get("path", ""))
+    if upload_state.get("kind") == "canonical":
+        if upload_state.get("review_blocked"):
+            return [], "Mapping ber-confidence rendah atau ambigu dan belum dikonfirmasi reviewer."
+        items = [dict(item) for item in upload_state.get("items", upload_state.get("data", []))]
+        return items, f"{len(items)} item kanonis siap direview."
     if upload_state.get("kind") == "table":
         frame = pd.DataFrame(upload_state["data"])
         combined = combine_selected_text_columns(frame, text_columns or [])
@@ -249,6 +329,14 @@ def chunk_text(text: str, max_len: int = 900) -> list[str]:
 
 
 def default_mapping(upload_state: dict[str, Any]) -> dict[str, Any]:
+    if upload_state.get("kind") == "canonical":
+        return {
+            "text_columns": ["item_per_rab"],
+            "volume_col": "volume",
+            "unit_col": "unit",
+            "unit_price_col": "unit_price",
+            "total_price_col": "total_price",
+        }
     detected = upload_state.get("detected", {})
     columns = upload_state.get("columns", [])
     text_columns = ["review_text"] if "review_text" in columns else [
@@ -270,12 +358,58 @@ def run_review(
     unit_col: str | None,
     unit_price_col: str | None,
     total_price_col: str | None,
+    engine: str = "Python Lokal",
+    secrets: Any | None = None,
+    progress_callback: Any | None = None,
 ) -> tuple[list[dict[str, Any]], str]:
     items, msg = build_items(upload_state, text_columns, volume_col, unit_col, unit_price_col, total_price_col)
     if not items:
         return [], f"Review belum dapat dijalankan. {msg}"
-    results = detect_items(items, db.get_settings())
-    return results, f"Review selesai. {msg} {DISCLAIMER}"
+    settings = db.get_settings()
+    resources = build_detection_resources()
+    results = [detect_item(item, settings, resources) for item in items]
+    candidate_sets = [trusted_rule_candidates(item, settings, resources) for item in items]
+    rule_pack_version = settings.get("keyword_pack_version", "")
+    results, provider_stats = review_with_provider(
+        items,
+        results,
+        candidate_sets,
+        engine,
+        rule_pack_version,
+        secrets=secrets,
+        progress_callback=progress_callback,
+    )
+    provider_note = ""
+    if engine != "Python Lokal":
+        provider_note = (
+            f" Provider cloud memproses {provider_stats['called']} baris; "
+            f"cache hit {provider_stats['cache_hits']}; gagal {provider_stats['failed']}."
+        )
+    return results, f"Review selesai dengan {engine}. {msg}{provider_note} {DISCLAIMER}"
+
+
+def cloud_payload_preview(upload_state: dict[str, Any], limit: int = 50) -> pd.DataFrame:
+    items, _ = build_items(upload_state, ["item_per_rab"], "volume", "unit", "unit_price", "total_price")
+    if not items:
+        return pd.DataFrame(columns=["Source ID", "Judul", "Section", "Item", "Kandidat Transaksi"])
+    settings = db.get_settings()
+    resources = build_detection_resources()
+    rows = []
+    for item in items[:limit]:
+        candidates = trusted_rule_candidates(item, settings, resources)
+        rows.append(
+            {
+                "Source ID": item.get("source_id") or item.get("row_id"),
+                "Judul": item.get("judul_rab", ""),
+                "Section": item.get("section", ""),
+                "Item": item.get("item_per_rab") or item.get("item_description") or "",
+                "Kandidat Transaksi": "; ".join(
+                    f"{candidate['candidate_id']}:{candidate.get('transaction_type') or candidate.get('keyword')}"
+                    for candidate in candidates
+                ),
+            }
+        )
+    return pd.DataFrame(rows)
 
 
 def analyze_redaction(text: str, judul_rab: str = "", section: str = "") -> dict[str, Any] | None:
@@ -334,8 +468,14 @@ def review_summary_dataframe(results: list[dict[str, Any]] | None) -> pd.DataFra
             ]
         )
     columns = [
+        "source_id",
         "row_id",
+        "source_coordinate",
         "item_per_rab",
+        "unit",
+        "volume",
+        "unit_price",
+        "total_price",
         "correction_percentage_label",
         "percentage_status",
         "final_confidence",
@@ -361,6 +501,13 @@ def review_summary_dataframe(results: list[dict[str, Any]] | None) -> pd.DataFra
         "decision_reason",
         "explanation",
         "redaction_suggestion",
+        "engine",
+        "provider_model",
+        "deterministic_confidence",
+        "ai_confidence",
+        "decision_source",
+        "rule_pack_version",
+        "parser_confidence",
         "source_file",
         "page_or_sheet",
     ]
@@ -369,12 +516,18 @@ def review_summary_dataframe(results: list[dict[str, Any]] | None) -> pd.DataFra
             frame[col] = ""
     return frame[columns].rename(
         columns={
+            "source_id": "Source ID",
             "row_id": "Row",
+            "source_coordinate": "Source Row",
             "source_file": "File",
             "page_or_sheet": "Sheet",
             "judul_rab": "Judul",
             "section": "Bagian",
             "item_per_rab": "Item per RAB",
+            "unit": "Satuan",
+            "volume": "Volume",
+            "unit_price": "Harga Satuan",
+            "total_price": "Total",
             "matched_category": "Kategori",
             "matched_keyword": "Keyword",
             "correction_percentage_label": "Prosentase NAC",
@@ -398,6 +551,13 @@ def review_summary_dataframe(results: list[dict[str, Any]] | None) -> pd.DataFra
             "explanation": "Alasan Deteksi",
             "decision_reason": "Alasan Keputusan",
             "redaction_suggestion": "Sugesti Perubahan Redaksi",
+            "engine": "Engine",
+            "provider_model": "Provider Model",
+            "deterministic_confidence": "Deterministic Confidence",
+            "ai_confidence": "AI Confidence",
+            "decision_source": "Sumber Keputusan",
+            "rule_pack_version": "Rule Pack",
+            "parser_confidence": "Parser Confidence",
         }
     )
 
@@ -405,18 +565,26 @@ def review_summary_dataframe(results: list[dict[str, Any]] | None) -> pd.DataFra
 def all_materials_dataframe(results: list[dict[str, Any]] | None) -> pd.DataFrame:
     frame = pd.DataFrame(results or [])
     columns = [
-        "row_id", "item_per_rab", "correction_percentage_label", "percentage_status", "final_confidence",
+        "source_id", "row_id", "source_coordinate", "item_per_rab", "unit", "volume", "unit_price", "total_price",
+        "correction_percentage_label", "percentage_status", "final_confidence",
         "confidence_label", "selected_transaction_type", "matched_category", "judul_rab", "section",
         "context_consistency_score", "item_match_keyword", "item_match_score", "section_match_keyword",
         "section_match_score", "title_match_keyword", "title_match_score", "reference_percentage_label",
         "alternative_transaction", "alternative_percentage_label", "match_type", "semantic_candidate_text",
-        "semantic_reason", "decision_reason",
+        "semantic_reason", "decision_reason", "engine", "provider_model", "deterministic_confidence",
+        "ai_confidence", "decision_source", "rule_pack_version", "parser_confidence",
     ]
     labels = {
+        "source_id": "Source ID",
         "row_id": "Row",
+        "source_coordinate": "Source Row",
         "judul_rab": "Judul RAB",
         "section": "Subjudul / Section",
         "item_per_rab": "Item RAB",
+        "unit": "Satuan",
+        "volume": "Volume",
+        "unit_price": "Harga Satuan",
+        "total_price": "Total",
         "matched_category": "Kategori NAC",
         "correction_percentage_label": "Prosentase NAC",
         "reference_percentage_label": "Prosentase Referensi",
@@ -437,6 +605,13 @@ def all_materials_dataframe(results: list[dict[str, Any]] | None) -> pd.DataFram
         "final_confidence": "Confidence %",
         "confidence_label": "Confidence Level",
         "decision_reason": "Alasan Keputusan",
+        "engine": "Engine",
+        "provider_model": "Provider Model",
+        "deterministic_confidence": "Deterministic Confidence",
+        "ai_confidence": "AI Confidence",
+        "decision_source": "Sumber Keputusan",
+        "rule_pack_version": "Rule Pack",
+        "parser_confidence": "Parser Confidence",
     }
     if frame.empty:
         return pd.DataFrame(columns=list(labels.values()))
@@ -560,4 +735,7 @@ def row_choices(results: list[dict[str, Any]] | None, only_with_synonym: bool = 
         return []
     if only_with_synonym:
         frame = frame[frame.get("suggested_synonym_candidate", "").astype(str).str.strip() != ""]
-    return [f"{row.get('row_id')} | {str(row.get('item_per_rab') or row.get('original_text') or '')[:80]}" for _, row in frame.iterrows()]
+    return [
+        f"{row.get('source_id') or row.get('row_id')} | {str(row.get('item_per_rab') or row.get('original_text') or '')[:80]}"
+        for _, row in frame.iterrows()
+    ]

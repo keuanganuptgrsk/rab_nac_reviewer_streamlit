@@ -57,9 +57,15 @@ def import_keywords_from_excel(file_path):
 
 
 def export_keyword_database(path):
-    with pd.ExcelWriter(path, engine="xlsxwriter") as writer:
-        pd.DataFrame(db.get_keywords(False)).to_excel(writer, sheet_name="NAC Keywords", index=False)
-        pd.DataFrame(db.get_synonyms(False)).to_excel(writer, sheet_name="Synonyms", index=False)
-        pd.DataFrame(db.get_allowable(False)).to_excel(writer, sheet_name="Allowable", index=False)
-        pd.DataFrame(db.get_exceptions(False)).to_excel(writer, sheet_name="Exceptions", index=False)
+    from .export_engine import write_professional_workbook
+
+    write_professional_workbook(
+        path,
+        {
+            "NAC Keywords": pd.DataFrame(db.get_keywords(False)),
+            "Synonyms": pd.DataFrame(db.get_synonyms(False)),
+            "Allowable": pd.DataFrame(db.get_allowable(False)),
+            "Exceptions": pd.DataFrame(db.get_exceptions(False)),
+        },
+    )
     return path

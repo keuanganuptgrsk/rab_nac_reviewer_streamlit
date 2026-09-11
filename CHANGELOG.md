@@ -2,6 +2,17 @@
 
 Semua penambahan fitur harus dicatat dengan format: versi, judul, tanggal, dan keterangan.
 
+## v1.4.0 - Adaptive RAB Parser and AI Review Providers - 2026-09-11
+
+- Mengganti parser posisi tetap dengan profiler adaptif untuk XLSX, XLS, CSV, PDF digital, dan PDF OCR.
+- Menambahkan model RAB kanonis, stable source ID, provenance nilai, diagnostics mapping, dan konfirmasi mapping manual per sesi.
+- Mengabaikan hidden row serta memvalidasi relasi volume, harga satuan, material, jasa, dan total tanpa koreksi diam-diam.
+- Menambahkan engine `Python Lokal`, `OpenAI API`, dan `Gemini Flash API` dengan consent eksplisit, structured output, retry, cache, serta deterministic fallback.
+- Membatasi AI hanya untuk merangking kandidat rule pack tepercaya; AI tidak dapat membuat atau mengubah Prosentase NAC.
+- Memperluas metadata audit provider, parser, rule pack, sumber keputusan, timestamp, serta confidence deterministic dan AI yang terpisah.
+- Mengganti PDF menjadi summary landscape dan appendix audit portrait, serta memperkuat format angka dan audit di seluruh Excel export.
+- Menambahkan validasi upload 100 MB, direktori sesi terisolasi, validasi restore SQLite, logging tersanitasi, dan dokumentasi arsitektur.
+
 ## v1.3.0 - Context-Aware Hierarchical NAC Review - 2026-09-10
 
 - Memisahkan deteksi `judul_rab`, `section/subjudul`, dan `item_per_rab` dengan bobot 15%, 25%, dan 60%.

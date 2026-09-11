@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import html
+import json
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -18,6 +20,7 @@ from modules.export_engine import (
     export_review_excel,
 )
 from modules.feedback_engine import learning_summary
+from modules.safe_logging import configure_logging
 from modules.version import APP_RELEASE_NOTES, APP_RELEASE_TITLE, APP_VERSION, version_banner
 
 
@@ -38,6 +41,11 @@ def init_session() -> None:
         "export_review_excel": "",
         "keyword_export": "",
         "db_backup": "",
+        "upload_session_id": uuid.uuid4().hex,
+        "review_engine": "Python Lokal",
+        "cloud_consent": False,
+        "manual_mappings": {},
+        "parser_confirmed": False,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -59,7 +67,10 @@ def load_uploaded_file(uploaded_file) -> None:
     signature = (getattr(uploaded_file, "name", ""), getattr(uploaded_file, "size", None))
     if signature == st.session_state.get("upload_signature"):
         return
-    path = review_flow.save_uploaded_file(uploaded_file)
+    path = review_flow.save_uploaded_file(
+        uploaded_file,
+        session_id=st.session_state.get("upload_session_id"),
+    )
     loaded = review_flow.load_uploaded_path(path)
     st.session_state.upload_signature = signature
     st.session_state.upload_state = loaded["state"]
@@ -67,8 +78,133 @@ def load_uploaded_file(uploaded_file) -> None:
     st.session_state.upload_message = loaded["message"]
     st.session_state.review_results = []
     st.session_state.review_message = ""
+    st.session_state.manual_mappings = {}
+    st.session_state.parser_confirmed = False
     for key in ["export_potential_pdf", "export_all_pdf", "export_all_excel", "export_review_excel"]:
         st.session_state[key] = ""
+
+
+def parser_diagnostics_panel(upload_state: dict) -> None:
+    diagnostics = upload_state.get("diagnostics") or [
+        region.get("diagnostic", {}) for region in upload_state.get("regions", [])
+    ]
+    if not diagnostics:
+        return
+    ui.section_label("Parser diagnostics")
+    diagnostic_rows = []
+    for diagnostic in diagnostics:
+        mapped = []
+        for role, mapping in diagnostic.get("mappings", {}).items():
+            if mapping.get("column_label"):
+                mapped.append(f"{role}={mapping['column_label']}")
+        diagnostic_rows.append(
+            {
+                "Region": diagnostic.get("region_id", "-"),
+                "Confidence": float(diagnostic.get("confidence") or 0),
+                "Level": diagnostic.get("confidence_label", "-"),
+                "Header Rows": ", ".join(map(str, diagnostic.get("header_rows", []))) or "-",
+                "Mapping": "; ".join(mapped) or "Text blocks",
+                "Arithmetic Failures": int(diagnostic.get("arithmetic_failures") or 0),
+                "Hidden Rows Skipped": int(diagnostic.get("hidden_rows_skipped") or 0),
+                "Status": "Perlu konfirmasi" if diagnostic.get("review_blocked") else "Siap",
+            }
+        )
+    st.dataframe(
+        pd.DataFrame(diagnostic_rows),
+        width="stretch",
+        hide_index=True,
+        column_config={
+            "Confidence": st.column_config.ProgressColumn(
+                "Confidence", min_value=0, max_value=100, format="%.1f%%"
+            ),
+            "Mapping": st.column_config.TextColumn("Mapping", width="large"),
+        },
+    )
+    warning_lines = [
+        warning
+        for diagnostic in diagnostics
+        for warning in diagnostic.get("warnings", [])
+    ]
+    if warning_lines:
+        with st.expander("Warning dan detail mapping", expanded=False):
+            for warning in warning_lines:
+                st.markdown(f"- {warning}")
+
+    if not upload_state.get("review_blocked"):
+        return
+    if upload_state.get("source_quality") == "ocr":
+        st.warning("OCR tidak memiliki struktur tabel tepercaya. Angka tidak direkonstruksi otomatis.")
+        if st.button("Konfirmasi review text-only", type="primary"):
+            loaded = review_flow.reload_with_manual_mapping(upload_state, {}, confirm_low_confidence=True)
+            _set_loaded_upload(loaded)
+            st.rerun()
+        return
+
+    with st.expander("Konfirmasi mapping manual", expanded=True):
+        st.caption("Pilih kolom untuk region yang ambigu. Mapping ini hanya berlaku pada upload dan sesi aktif.")
+        manual_mappings = dict(st.session_state.get("manual_mappings", {}))
+        with st.form("manual_mapping_form"):
+            for diagnostic in diagnostics:
+                if not diagnostic.get("review_blocked"):
+                    continue
+                region_id = diagnostic.get("region_id", "region")
+                st.markdown(f"**{region_id}**")
+                mappings = diagnostic.get("mappings", {})
+                used_labels = [mapping.get("column_label", "") for mapping in mappings.values()]
+                max_index = max([_excel_col_number(label) for label in used_labels if label] + [16])
+                options = [""] + [_excel_col_label(index) for index in range(1, min(max_index + 4, 52) + 1)]
+                cols = st.columns(4)
+                for position, (role, label) in enumerate(
+                    [
+                        ("description", "Item / Uraian"),
+                        ("item_number", "No."),
+                        ("unit", "Satuan"),
+                        ("volume", "Volume"),
+                        ("material_unit_price", "Harga Material"),
+                        ("service_unit_price", "Harga Jasa"),
+                        ("total_price", "Total"),
+                        ("notes", "Catatan"),
+                    ]
+                ):
+                    current = mappings.get(role, {}).get("column_label", "")
+                    with cols[position % 4]:
+                        selected = st.selectbox(
+                            label,
+                            options,
+                            index=options.index(current) if current in options else 0,
+                            key=f"manual_{region_id}_{role}",
+                        )
+                    manual_mappings.setdefault(region_id, {})[role] = selected
+            submitted = st.form_submit_button("Terapkan dan konfirmasi mapping", type="primary")
+        if submitted:
+            loaded = review_flow.reload_with_manual_mapping(upload_state, manual_mappings)
+            st.session_state.manual_mappings = manual_mappings
+            _set_loaded_upload(loaded)
+            st.rerun()
+
+
+def _set_loaded_upload(loaded: dict) -> None:
+    st.session_state.upload_state = loaded["state"]
+    st.session_state.upload_preview = loaded["preview"]
+    st.session_state.upload_message = loaded["message"]
+    st.session_state.review_results = []
+    st.session_state.review_message = ""
+
+
+def _excel_col_number(label: str) -> int:
+    number = 0
+    for char in str(label or "").upper():
+        if "A" <= char <= "Z":
+            number = number * 26 + ord(char) - 64
+    return number
+
+
+def _excel_col_label(number: int) -> str:
+    label = ""
+    while number:
+        number, remainder = divmod(number - 1, 26)
+        label = chr(65 + remainder) + label
+    return label
 
 
 def review_page() -> None:
@@ -84,8 +220,12 @@ def review_page() -> None:
         key="rab_file_uploader",
     )
     if uploaded is not None:
-        with st.spinner("Membaca struktur file dan menyiapkan preview..."):
-            load_uploaded_file(uploaded)
+        try:
+            with st.spinner("Membaca struktur file dan menyiapkan preview..."):
+                load_uploaded_file(uploaded)
+        except Exception as exc:
+            st.error(f"File tidak dapat diproses: {exc}")
+            return
 
     upload_state = st.session_state.get("upload_state", {})
     if not upload_state:
@@ -94,10 +234,30 @@ def review_page() -> None:
 
     ui.status_note(st.session_state.get("upload_message", "File siap direview."))
 
+    parser_diagnostics_panel(upload_state)
+
     preview = st.session_state.get("upload_preview", pd.DataFrame())
     if preview is not None and not preview.empty:
-        with st.expander("Preview data terdeteksi", expanded=False):
-            st.dataframe(preview, width="stretch", hide_index=True, height=ui.dataframe_height(preview, 180, 360))
+        ui.section_label("Preview finance")
+        st.dataframe(
+            preview,
+            width="stretch",
+            hide_index=True,
+            height=ui.dataframe_height(preview, 220, 430),
+            column_config={
+                "Item / Uraian": st.column_config.TextColumn("Item / Uraian", width="large"),
+                "Volume": st.column_config.NumberColumn("Volume", format="%.2f"),
+                "Harga Satuan": st.column_config.NumberColumn("Harga Satuan", format="Rp %.0f"),
+                "Total": st.column_config.NumberColumn("Total", format="Rp %.0f"),
+                "Source Row": st.column_config.TextColumn("Source Row", width="small"),
+            },
+        )
+        with st.expander("Debug / Raw Parser Data", expanded=False):
+            raw = pd.DataFrame(upload_state.get("items", []))
+            for column in ("raw_values", "provenance", "parser_warnings"):
+                if column in raw.columns:
+                    raw[column] = raw[column].map(lambda value: json.dumps(value, ensure_ascii=False, default=str))
+            st.dataframe(raw, width="stretch", hide_index=True, height=360)
 
     mapping = review_flow.default_mapping(upload_state)
     columns = list(upload_state.get("columns", []))
@@ -122,10 +282,66 @@ def review_page() -> None:
         text_columns = mapping["text_columns"]
         volume_col = unit_col = unit_price_col = total_price_col = None
 
-    run_clicked = st.button("Run NAC Review", type="primary", width="stretch")
+    ui.section_label("Review engine")
+    engine = st.segmented_control(
+        "Review engine",
+        ["Python Lokal", "OpenAI API", "Gemini Flash API"],
+        key="review_engine",
+        label_visibility="collapsed",
+    ) or "Python Lokal"
+    provider_status = review_flow.provider_runtime_status(engine, st.secrets)
+    if engine == "Python Lokal":
+        st.caption("Offline. Seluruh data dan keputusan diproses oleh deterministic rule engine lokal.")
+    else:
+        credential_text = "siap" if provider_status["credential"] else "belum tersedia"
+        package_text = "terpasang" if provider_status["package"] else "belum terpasang"
+        st.caption(
+            f"Mode cloud | model {provider_status['model']} | SDK {package_text} | credential {credential_text}."
+        )
+        st.session_state.cloud_consent = st.checkbox(
+            "Saya menyetujui pengiriman data review pada sesi ini ke provider cloud yang dipilih.",
+            value=bool(st.session_state.get("cloud_consent")),
+        )
+        with st.expander("Data yang dikirim ke provider", expanded=False):
+            st.markdown(
+                "Setiap baris mengirim **judul RAB, section/subjudul, item/uraian, dan maksimal lima kandidat transaksi tepercaya**. "
+                "File asli, API key, harga, total, serta Prosentase NAC tidak dikirim oleh prompt provider."
+            )
+            payload_preview = review_flow.cloud_payload_preview(upload_state)
+            st.dataframe(payload_preview, width="stretch", hide_index=True, height=300)
+            if len(upload_state.get("items", [])) > len(payload_preview):
+                st.caption(
+                    f"Preview menampilkan {len(payload_preview)} dari {len(upload_state.get('items', []))} baris; "
+                    "seluruh baris diproses saat review."
+                )
+
+    parser_blocked = bool(upload_state.get("review_blocked"))
+    cloud_blocked = engine != "Python Lokal" and (
+        not provider_status["available"] or not st.session_state.get("cloud_consent")
+    )
+    run_clicked = st.button(
+        "Run NAC Review",
+        type="primary",
+        width="stretch",
+        disabled=parser_blocked or cloud_blocked,
+    )
+    if parser_blocked:
+        st.warning("Review belum dapat dijalankan sampai mapping parser dikonfirmasi.")
+    elif cloud_blocked:
+        st.warning("Lengkapi credential provider dan persetujuan sesi untuk menjalankan review cloud.")
     if run_clicked:
         try:
             with st.spinner("Memproses deteksi NAC..."):
+                progress = st.progress(0, text="Menyiapkan deterministic review...") if engine != "Python Lokal" else None
+
+                def update_progress(done, total, cache_hits, failed):
+                    if progress is not None:
+                        ratio = done / max(total, 1)
+                        progress.progress(
+                            ratio,
+                            text=f"Provider cloud: {done}/{total} cache miss diproses | cache hit {cache_hits} | gagal {failed}",
+                        )
+
                 results, message = review_flow.run_review(
                     upload_state,
                     text_columns,
@@ -133,7 +349,12 @@ def review_page() -> None:
                     unit_col,
                     unit_price_col,
                     total_price_col,
+                    engine=engine,
+                    secrets=st.secrets,
+                    progress_callback=update_progress,
                 )
+                if progress is not None:
+                    progress.progress(1.0, text="Review selesai.")
             st.session_state.review_results = results
             st.session_state.review_message = message
         except Exception as exc:
@@ -615,9 +836,15 @@ def backup_restore_panel() -> None:
     with b2:
         restore_file = st.file_uploader("Restore dari backup SQLite", type=["db", "sqlite", "sqlite3"], key="restore_db_file")
         if st.button("Restore Database", disabled=restore_file is None):
-            path = review_flow.save_uploaded_file(restore_file)
-            db.restore_db(path)
-            st.success("Backup berhasil direstore. Refresh halaman bila data belum berubah.")
+            try:
+                path = review_flow.save_database_upload(
+                    restore_file,
+                    session_id=st.session_state.get("upload_session_id"),
+                )
+                db.restore_db(path)
+                st.success("Backup lolos integrity/schema check dan berhasil direstore.")
+            except Exception as exc:
+                st.error(f"Restore ditolak: {exc}")
 
 
 def learning_page() -> None:
@@ -686,8 +913,8 @@ def settings_page() -> None:
                 {"Status": "Package", "Nilai": "Tersedia" if overview["package_available"] else "Belum terpasang"},
                 {"Status": "Model aktif", "Nilai": overview["model"]},
                 {"Status": "Status model", "Nilai": overview["model_status"]},
-                {"Status": "Kandidat index", "Nilai": overview["candidate_count"]},
-                {"Status": "Cache index", "Nilai": overview["cached_index_count"]},
+                {"Status": "Kandidat index", "Nilai": str(overview["candidate_count"])},
+                {"Status": "Cache index", "Nilai": str(overview["cached_index_count"])},
             ]
         ),
         width="stretch",
@@ -709,11 +936,36 @@ def settings_page() -> None:
             f"Sinonim aktif: {overview['active_synonym_count']} | Feedback Correct NAC: {overview['positive_feedback_count']}"
         )
 
+    ui.section_label("AI Review Providers")
+    provider_rows = []
+    for engine_name in ["Python Lokal", "OpenAI API", "Gemini Flash API"]:
+        status = review_flow.provider_runtime_status(engine_name, st.secrets)
+        provider_rows.append(
+            {
+                "Engine": engine_name,
+                "Mode": status["mode"],
+                "SDK": "Tersedia" if status["package"] else "Belum terpasang",
+                "Credential": "Tersedia" if status["credential"] else "Belum tersedia",
+                "Model": status["model"],
+                "Siap": "Ya" if status["available"] else "Tidak",
+            }
+        )
+    st.dataframe(pd.DataFrame(provider_rows), width="stretch", hide_index=True)
+    st.caption(
+        "API key hanya dibaca dari Streamlit secrets atau environment dan tidak ditulis ke database, log, cache, maupun hasil export."
+    )
+    test_cols = st.columns(2)
+    for index, engine_name in enumerate(["OpenAI API", "Gemini Flash API"]):
+        with test_cols[index]:
+            if st.button(f"Test {engine_name}", width="stretch", key=f"test_{engine_name}"):
+                ok, message = review_flow.test_provider_connection(engine_name, st.secrets)
+                (st.success if ok else st.error)(message)
+
     with st.expander("Versioning dan rollback", expanded=True):
         st.markdown(version_banner())
         st.markdown(
             """
-Rilis ini memakai tag git `v1.3.0`. Untuk rollback lokal, gunakan tag stabil dari GitHub atau jalankan `git checkout v1.2.1` pada salinan repo. Untuk Streamlit Cloud, deploy ulang branch atau tag yang ingin dipakai.
+Rilis ini memakai tag git `v1.4.0`. Untuk rollback lokal, gunakan tag stabil dari GitHub atau jalankan `git checkout v1.3.0` pada salinan repo. Untuk Streamlit Cloud, deploy ulang branch atau tag yang ingin dipakai.
 """
         )
 
@@ -725,6 +977,7 @@ Rilis ini memakai tag git `v1.3.0`. Untuk rollback lokal, gunakan tag stabil dar
 
 
 def main() -> None:
+    configure_logging()
     ui.apply_page_config()
     db.init_db()
     init_session()

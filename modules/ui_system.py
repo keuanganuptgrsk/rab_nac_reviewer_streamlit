@@ -10,8 +10,6 @@ import streamlit as st
 
 STYLE_CSS = """
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&family=Geist+Mono:wght@500;600&display=swap');
-
 :root {
   --rab-bg: #f5f4ef;
   --rab-panel: #ffffff;
@@ -26,13 +24,11 @@ STYLE_CSS = """
 }
 
 html, body, [class*="css"] {
-  font-family: "Geist", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
 .stApp {
-  background:
-    linear-gradient(135deg, rgba(45, 127, 115, 0.05), transparent 34rem),
-    var(--rab-bg);
+  background: var(--rab-bg);
   color: var(--rab-ink);
 }
 
@@ -57,7 +53,7 @@ div[data-testid="stBaseButton-primary"] button,
 
 .stButton > button,
 .stDownloadButton > button {
-  border-radius: 12px !important;
+  border-radius: 6px !important;
   min-height: 2.8rem;
   font-weight: 700;
   border-color: var(--rab-line);
@@ -73,7 +69,7 @@ div[data-testid="stBaseButton-primary"] button,
 .stTextArea textarea,
 .stSelectbox [data-baseweb="select"],
 .stMultiSelect [data-baseweb="select"] {
-  border-radius: 12px;
+  border-radius: 6px;
 }
 
 .app-hero {
@@ -137,7 +133,7 @@ div[data-testid="stBaseButton-primary"] button,
 
 .hero-panel-number {
   margin-top: 16px;
-  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
   font-size: 42px;
   line-height: 1;
   color: var(--rab-ink);
@@ -179,7 +175,7 @@ div[data-testid="stBaseButton-primary"] button,
 }
 
 .metric-number {
-  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
   color: var(--rab-ink);
   font-size: 28px;
   line-height: 1.1;

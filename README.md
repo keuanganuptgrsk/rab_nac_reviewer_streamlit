@@ -2,15 +2,17 @@
 
 RAB NAC Reviewer adalah aplikasi Streamlit untuk membantu reviewer finance melakukan review awal dokumen RAB dan mendeteksi potensi NAC. Aplikasi ini tidak menggantikan keputusan reviewer; hasil deteksi wajib divalidasi terhadap PMK, kebijakan internal, dan konteks pekerjaan.
 
-Versi aktif: `v1.3.0 - Context-Aware Hierarchical NAC Review`.
+Versi aktif: `v1.4.0 - Adaptive RAB Parser and AI Review Providers`.
 
 ## Fitur
 
 - Upload RAB Excel, CSV, PDF digital, PDF scan, dan gambar.
-- Parser Excel RAB Indonesia dengan dukungan judul pekerjaan, section, item, volume, satuan, harga satuan, dan total.
+- Parser adaptif XLSX, XLS, CSV, PDF digital, dan PDF OCR dengan diagnostics mapping per tabel.
 - Deteksi NAC context-aware: exact keyword, sinonim, fuzzy, dan semantic dinilai terpisah pada item, subjudul, serta judul.
+- Pilihan review `Python Lokal`, `OpenAI API`, dan `Gemini Flash API`; mode lokal selalu menjadi default sesi baru.
 - Database SQLite lokal untuk keyword NAC 2026 Kategori A/B, sinonim, allowable keyword, exception, settings, dan feedback.
 - Output review memisahkan `Prosentase NAC` sebagai aturan koreksi dan `Confidence` sebagai keyakinan klasifikasi.
+- Stable source ID, provenance nilai, parser confidence, provider audit, dan sumber keputusan untuk penelusuran hasil.
 - Export PDF ringkasan potensi NAC, PDF seluruh material, Excel seluruh material, Excel audit lengkap, dan database keyword.
 - Backup dan restore SQLite dari UI.
 - Bulk nonaktifkan, restore, dan hapus permanen keyword NAC dari tabel checkbox.
@@ -21,14 +23,26 @@ Versi aktif: `v1.3.0 - Context-Aware Hierarchical NAC Review`.
 1. Buka aplikasi Streamlit.
 2. Masuk ke halaman `Review RAB`.
 3. Upload file RAB. Format paling disarankan adalah `.xlsx` atau `.csv`.
-4. Cek pesan deteksi kolom dan preview data.
-5. Tekan `Run NAC Review`.
-6. Baca tabel `Temuan prioritas` untuk item confidence `Sedang`, `Tinggi`, dan `Sangat tinggi`.
-7. Cek `Prosentase NAC`, `Status Prosentase`, dan `Type of Transaction` untuk melihat aturan koreksi yang diterapkan.
-8. Baca `Confidence`, bukti match judul/subjudul/item, dan alasan keputusan sebagai audit keyakinan sistem.
-9. Buka `Tabel seluruh item RAB` untuk melihat semua material, termasuk confidence rendah.
-10. Isi `Feedback reviewer` bila ada false positive, false negative, atau sinonim baru.
-11. Gunakan bagian `Export hasil` untuk membuat PDF atau Excel dokumentasi review.
+4. Periksa preview dan `Parser diagnostics`. Mapping rendah atau ambigu harus dikonfirmasi pada form mapping manual sebelum review.
+5. Pilih `Python Lokal` untuk review offline, atau provider cloud bila credential tersedia.
+6. Untuk provider cloud, periksa data yang akan dikirim lalu centang persetujuan sesi.
+7. Tekan `Run NAC Review`.
+8. Baca tabel `Temuan prioritas` untuk item confidence `Sedang`, `Tinggi`, dan `Sangat tinggi`.
+9. Cek `Prosentase NAC`, `Status Prosentase`, dan `Type of Transaction` untuk melihat aturan koreksi yang diterapkan.
+10. Baca `Confidence`, bukti match judul/subjudul/item, dan alasan keputusan sebagai audit keyakinan sistem.
+11. Buka `Tabel seluruh item RAB` untuk melihat semua material, termasuk confidence rendah.
+12. Isi `Feedback reviewer` bila ada false positive, false negative, atau sinonim baru.
+13. Gunakan bagian `Export hasil` untuk membuat PDF atau Excel dokumentasi review.
+
+## Parser Adaptif dan Diagnostics
+
+- Setiap sheet dipindai untuk menemukan satu atau beberapa region tabel dan header bertingkat 1-4 baris.
+- Mapping mempertimbangkan arti header, pola data, relasi aritmetika, serta posisi kolom. Workbook dengan layout berbeda boleh menghasilkan mapping yang berbeda.
+- Hidden row tidak masuk preview, review, feedback, atau export. Jumlahnya tetap dicatat pada diagnostics.
+- Harga satuan dapat berasal dari material, jasa, atau penjumlahan keduanya. Total memprioritaskan kolom total valid, lalu komponen total, lalu volume dikali harga satuan.
+- Nilai hasil formula memakai cached value dari workbook bila tersedia. `include`, `included`, `N/A`, tanda hubung, dan blank disimpan sebagai raw marker, bukan angka nol.
+- Konflik aritmetika menjadi warning dan tidak dikoreksi diam-diam.
+- Mapping manual hanya berlaku untuk file dan sesi aktif; aplikasi tidak menyimpan asumsi layout tersebut sebagai aturan global.
 
 ## Cara Kerja Review Hierarkis
 
@@ -41,6 +55,23 @@ Versi aktif: `v1.3.0 - Context-Aware Hierarchical NAC Review`.
 - Bila dua transaksi kuat memiliki prosentase berbeda, hasil ditandai `Perlu penentuan reviewer - Ambigu` tanpa angka tebakan.
 
 `Prosentase NAC` selalu berasal dari `correction_percentage` keyword pack/PPT. Semantic score dan Confidence tidak pernah digunakan untuk menciptakan prosentase baru.
+
+## Engine Review dan AI Provider
+
+`Python Lokal` memakai deterministic NAC engine dan tidak melakukan network call. OpenAI/Gemini menerima seluruh baris RAB dalam batch maksimal 20 hanya setelah persetujuan eksplisit pada sesi tersebut. UI menampilkan data yang dikirim: judul, section, uraian item, dan kandidat transaksi tepercaya.
+
+AI hanya boleh merangking maksimal lima candidate ID dari deterministic engine. Payload provider tidak memiliki field prosentase. Candidate ID asing, schema invalid, upaya menambahkan prosentase, atau konflik allowable/exception ditolak. Alternate AI baru dapat dipakai bila AI confidence minimal 80, tidak ambigu, kandidat deterministic awal di bawah 75, dan tidak ada guard conflict. Kegagalan API mempertahankan hasil deterministic sebagai fallback.
+
+Credential dapat disimpan melalui `Manage app > Settings > Secrets` di Streamlit Community Cloud:
+
+```toml
+OPENAI_API_KEY = "isi-key-openai"
+OPENAI_MODEL = "gpt-5.6-luna"
+GEMINI_API_KEY = "isi-key-gemini"
+GEMINI_MODEL = "gemini-3.8-flash"
+```
+
+Jangan simpan key asli di `.env.example`, source code, commit Git, database, atau file export. Status package, credential, model, dan tombol test connection tersedia pada halaman `Settings`.
 
 ## Keyword Pack NAC 2026
 
@@ -66,6 +97,8 @@ Versi aktif: `v1.3.0 - Context-Aware Hierarchical NAC Review`.
 6. Branch: `main`.
 7. Main file path: `streamlit_app.py`.
 8. Klik `Deploy`.
+
+Tambahkan API key pada Secrets hanya bila engine cloud memang akan dipakai. Aplikasi tetap berfungsi penuh dengan `Python Lokal` tanpa credential eksternal.
 
 Catatan penting: Streamlit Community Cloud gratis cocok untuk penggunaan ringan. SQLite di hosting gratis bersifat praktis, tetapi tetap perlu backup rutin dari tombol `Buat Backup Database`, terutama setelah menambah keyword atau feedback penting.
 
@@ -108,6 +141,10 @@ python -m pytest
   - `RAB_NAC_DATA_DIR`: lokasi folder data.
   - `RAB_NAC_EXPORT_DIR`: lokasi file export.
   - `RAB_NAC_UPLOAD_DIR`: lokasi file upload sementara.
+  - `OPENAI_API_KEY` / `OPENAI_MODEL`: credential dan override model OpenAI.
+  - `GEMINI_API_KEY` / `GEMINI_MODEL`: credential dan override model Gemini.
+
+Restore database memeriksa header SQLite, integrity check, tabel, dan kolom wajib pada staging file. Database aktif hanya diganti setelah validasi berhasil; rollback backup dipakai bila inisialisasi database hasil restore gagal.
 
 ## OCR
 
@@ -150,13 +187,13 @@ Roadmap dan catatan teknis semantic berada di [docs/semantic_similarity_indonesi
 
 ## Versioning dan Rollback
 
-Rilis ini ditandai sebagai tag git `v1.3.0`.
+Rilis ini ditandai sebagai tag git `v1.4.0`.
 
 Rollback lokal:
 
 ```powershell
 git fetch --tags
-git checkout v1.2.1
+git checkout v1.3.0
 ```
 
 Rollback deploy Streamlit Cloud:
@@ -171,3 +208,5 @@ Rollback deploy Streamlit Cloud:
 - PDF scan dan gambar bergantung pada kualitas OCR.
 - SQLite gratis mudah dipakai, tetapi bukan pengganti database production multi-user yang kuat.
 - Jangan upload dokumen finance sensitif ke cloud publik bila kebijakan internal melarang pemrosesan di layanan pihak ketiga.
+
+Arsitektur, boundary keamanan, dan roadmap penggunaan enterprise dijelaskan di [docs/architecture_v1_4.md](docs/architecture_v1_4.md).

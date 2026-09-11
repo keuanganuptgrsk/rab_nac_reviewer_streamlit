@@ -20,11 +20,15 @@ def save_row_feedback(
     frame = pd.DataFrame(results or [])
     if frame.empty or not row_id:
         return "Pilih row hasil review."
-    row = frame[frame["row_id"].astype(str) == str(row_id)]
+    source_column = "source_id" if "source_id" in frame.columns else "row_id"
+    row = frame[frame[source_column].astype(str) == str(row_id)]
+    if row.empty and "row_id" in frame.columns:
+        row = frame[frame["row_id"].astype(str) == str(row_id)]
     if row.empty:
         return "Row tidak ditemukan."
     rec = row.iloc[0].to_dict()
-    db.save_feedback(row_id, rec.get("original_text", ""), rec.get("matched_keyword", ""), feedback_type, redaction, notes)
+    stable_id = str(rec.get("source_id") or rec.get("row_id") or row_id)
+    db.save_feedback(stable_id, rec.get("original_text", ""), rec.get("matched_keyword", ""), feedback_type, redaction, notes)
     return "Feedback tersimpan ke SQLite."
 
 
@@ -33,7 +37,10 @@ def approve_suggested_synonym(results: list[dict[str, Any]] | None, row_selectio
     frame = pd.DataFrame(results or [])
     if frame.empty or not row_id:
         return "Pilih row yang memiliki kandidat sinonim."
-    row = frame[frame["row_id"].astype(str) == str(row_id)]
+    source_column = "source_id" if "source_id" in frame.columns else "row_id"
+    row = frame[frame[source_column].astype(str) == str(row_id)]
+    if row.empty and "row_id" in frame.columns:
+        row = frame[frame["row_id"].astype(str) == str(row_id)]
     if row.empty:
         return "Row tidak ditemukan."
     rec = row.iloc[0].to_dict()
@@ -48,7 +55,7 @@ def approve_suggested_synonym(results: list[dict[str, Any]] | None, row_selectio
         return "Sinonim sudah ada di database."
     db.add_synonym(keyword_row["id"], candidate, float(weight or 0.85), "active")
     db.save_feedback(
-        row_id,
+        str(rec.get("source_id") or rec.get("row_id") or row_id),
         rec.get("original_text", ""),
         keyword,
         "Add as Synonym",

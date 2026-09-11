@@ -113,6 +113,11 @@ def _build_resources() -> dict[str, Any]:
     }
 
 
+def build_detection_resources() -> dict[str, Any]:
+    """Public resource snapshot shared by deterministic and provider candidate passes."""
+    return _build_resources()
+
+
 def _exact_score(text: str, phrase: str, source: str, synonym_weight: float) -> float:
     text_tokens = max(1, len(text.split()))
     phrase_tokens = max(1, len(phrase.split()))
@@ -726,8 +731,14 @@ def detect_item(item: dict[str, Any], settings: dict[str, Any] | None = None, re
 
     return {
         "row_id": item.get("row_id"),
+        "source_id": item.get("source_id") or item.get("row_id"),
         "source_file": item.get("source_file"),
         "page_or_sheet": item.get("page_or_sheet"),
+        "source_location": item.get("source_location", ""),
+        "source_row": item.get("source_row", ""),
+        "source_coordinate": item.get("source_coordinate", ""),
+        "item_no": item.get("item_no", item.get("row_id", "")),
+        "display_sequence": item.get("display_sequence", ""),
         "original_text": original,
         "normalized_text": " | ".join(value for value in normalized_fields.values() if value),
         "item_description": item.get("item_description", item_text or original),
@@ -738,6 +749,16 @@ def detect_item(item: dict[str, Any], settings: dict[str, Any] | None = None, re
         "unit": item.get("unit", ""),
         "unit_price": item.get("unit_price", ""),
         "total_price": item.get("total_price", ""),
+        "material_unit_price": item.get("material_unit_price", ""),
+        "service_unit_price": item.get("service_unit_price", ""),
+        "material_total": item.get("material_total", ""),
+        "service_total": item.get("service_total", ""),
+        "parser_strategy": item.get("parser_strategy", ""),
+        "parser_confidence": item.get("parser_confidence", ""),
+        "parser_warnings": item.get("parser_warnings", []),
+        "provenance": item.get("provenance", {}),
+        "raw_values": item.get("raw_values", {}),
+        "matched_keyword_id": selected_row.get("id", ""),
         "matched_keyword": selected_row.get("keyword", ""),
         "matched_category": selected_row.get("category", ""),
         "nac_group": selected_row.get("nac_group", ""),
@@ -788,6 +809,14 @@ def detect_item(item: dict[str, Any], settings: dict[str, Any] | None = None, re
         "synonym_suggestion_reason": synonym_reason,
         "user_feedback": "",
         "reviewer_notes": "",
+        "engine": "Python Lokal",
+        "provider_model": "deterministic-nac-engine",
+        "prompt_version": "local-rules-1.0",
+        "analysis_timestamp": "",
+        "deterministic_confidence": round(confidence, 2),
+        "ai_confidence": 0.0,
+        "decision_source": "deterministic_local",
+        "rule_pack_version": settings.get("keyword_pack_version", ""),
     }
 
 
@@ -795,3 +824,76 @@ def detect_items(items: list[dict[str, Any]], settings: dict[str, Any] | None = 
     settings = settings or db.get_settings()
     resources = _build_resources()
     return [detect_item(item, settings, resources) for item in items]
+
+
+def build_detection_resources() -> dict[str, Any]:
+    return _build_resources()
+
+
+def trusted_rule_candidates(
+    item: dict[str, Any],
+    settings: dict[str, Any] | None = None,
+    resources: dict[str, Any] | None = None,
+    limit: int = 5,
+) -> list[dict[str, Any]]:
+    """Return auditable rule candidates for provider ranking without exposing percentage in prompts."""
+    settings = settings or db.get_settings()
+    resources = resources or _build_resources()
+    field_texts = {
+        "item": _clean_text(item.get("item_per_rab") or item.get("item_description") or item.get("original_text")),
+        "section": _clean_text(item.get("section")),
+        "title": _clean_text(item.get("judul_rab")),
+    }
+    normalized_fields = {}
+    field_candidates = {}
+    for field, text in field_texts.items():
+        normalized, candidates = _field_candidates(text, settings, resources)
+        normalized_fields[field] = normalized
+        field_candidates[field] = candidates
+    ranked = _aggregate_candidates(field_candidates)
+    allowable_score, _, _ = _allowable_across_fields(normalized_fields, resources["allowable"])
+    source_penalty = 8.0 if item.get("source_quality") == "ocr" else 0.0
+    context_text = " | ".join(value for value in field_texts.values() if value)
+    output = []
+    for candidate in ranked[:limit]:
+        row = candidate["row"]
+        exception, exception_penalty, _ = _exception_across_fields(
+            normalized_fields, row.get("id"), resources["exceptions"]
+        )
+        feedback_adjustment = _feedback_adjustment(
+            context_text.lower(), _clean_text(row.get("keyword")), resources["feedback"]
+        )
+        conflict_penalty = _conflict_penalty(candidate, field_candidates)
+        confidence = (
+            float(candidate["evidence_score"])
+            + float(candidate["consistency_bonus"])
+            + float(candidate["corroboration_bonus"])
+            + float(candidate["specificity_bonus"])
+            + float(candidate["severity_adjustment"])
+            + feedback_adjustment
+            - 0.20 * allowable_score
+            - exception_penalty
+            - conflict_penalty
+            - source_penalty
+        )
+        if not candidate["item_supported"]:
+            confidence = min(confidence, 44.0)
+        confidence = clamp_score(confidence)
+        evidence_terms = []
+        for field, signal in candidate["fields"].items():
+            evidence_terms.append(
+                f"{FIELD_LABELS.get(field, field)}:{signal.get('matched_text') or row.get('keyword')}:{float(signal.get('score') or 0):.1f}"
+            )
+        output.append(
+            {
+                "candidate_id": str(row.get("id") or candidate["key"]),
+                "keyword": row.get("keyword", ""),
+                "category": row.get("category", ""),
+                "transaction_type": row.get("transaction_type", ""),
+                "deterministic_confidence": round(confidence, 2),
+                "evidence_terms": evidence_terms,
+                "guard_conflict": bool(allowable_score >= 60 or exception),
+                "rule": dict(row),
+            }
+        )
+    return output
