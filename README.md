@@ -2,7 +2,7 @@
 
 RAB NAC Reviewer adalah aplikasi Streamlit untuk membantu reviewer finance melakukan review awal dokumen RAB dan mendeteksi potensi NAC. Aplikasi ini tidak menggantikan keputusan reviewer; hasil deteksi wajib divalidasi terhadap PMK, kebijakan internal, dan konteks pekerjaan.
 
-Versi aktif: `v1.4.0 - Adaptive RAB Parser and AI Review Providers`.
+Versi aktif: `v1.4.1 - PDF RAB Title and Header Contrast`.
 
 ## Fitur
 
@@ -187,13 +187,13 @@ Roadmap dan catatan teknis semantic berada di [docs/semantic_similarity_indonesi
 
 ## Versioning dan Rollback
 
-Rilis ini ditandai sebagai tag git `v1.4.0`.
+Rilis ini ditandai sebagai tag git `v1.4.1`.
 
 Rollback lokal:
 
 ```powershell
 git fetch --tags
-git checkout v1.3.0
+git checkout v1.4.0
 ```
 
 Rollback deploy Streamlit Cloud:

@@ -358,6 +358,8 @@ def _write_review_pdf(path: Path, title: str, rows: list[dict[str, Any]]) -> Non
         BaseDocTemplate,
         Frame,
         KeepTogether,
+        ListFlowable,
+        ListItem,
         NextPageTemplate,
         PageBreak,
         PageTemplate,
@@ -369,12 +371,18 @@ def _write_review_pdf(path: Path, title: str, rows: list[dict[str, Any]]) -> Non
 
     path.parent.mkdir(parents=True, exist_ok=True)
     generated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    rab_titles = _unique_rab_titles(rows)
+    metadata_title = _pdf_metadata_title(title, rab_titles)
     styles = getSampleStyleSheet()
-    title_style = ParagraphStyle("RabTitle", parent=styles["Title"], fontName="Helvetica-Bold", fontSize=16, leading=20, textColor=colors.HexColor("#1F2A2E"), alignment=TA_LEFT, spaceAfter=6)
+    title_style = ParagraphStyle("RabTitle", parent=styles["Title"], fontName="Helvetica-Bold", fontSize=16, leading=20, textColor=colors.HexColor("#1F2A2E"), alignment=TA_LEFT, spaceAfter=3)
+    subtitle_style = ParagraphStyle("RabSubtitle", parent=styles["Heading2"], fontName="Helvetica-Bold", fontSize=12, leading=15, textColor=colors.HexColor("#246B61"), alignment=TA_LEFT, spaceAfter=5)
+    title_list_label_style = ParagraphStyle("RabTitleListLabel", parent=styles["Heading3"], fontName="Helvetica-Bold", fontSize=10, leading=13, textColor=colors.HexColor("#246B61"), alignment=TA_LEFT, spaceAfter=2)
+    title_list_style = ParagraphStyle("RabTitleListItem", parent=styles["BodyText"], fontName="Helvetica", fontSize=9, leading=12, textColor=colors.HexColor("#39474C"))
     body_style = ParagraphStyle("RabBody", parent=styles["BodyText"], fontName="Helvetica", fontSize=8.5, leading=11, textColor=colors.HexColor("#39474C"))
     small_style = ParagraphStyle("RabSmall", parent=body_style, fontSize=7.5, leading=9.5)
     section_style = ParagraphStyle("RabSection", parent=styles["Heading2"], fontName="Helvetica-Bold", fontSize=11, leading=14, textColor=colors.HexColor("#246B61"), spaceBefore=4, spaceAfter=6)
     label_style = ParagraphStyle("RabLabel", parent=small_style, fontName="Helvetica-Bold", textColor=colors.HexColor("#59676B"))
+    table_header_style = ParagraphStyle("RabTableHeader", parent=small_style, fontName="Helvetica-Bold", fontSize=7.5, leading=9.5, textColor=colors.white)
 
     document = BaseDocTemplate(
         str(path),
@@ -383,7 +391,7 @@ def _write_review_pdf(path: Path, title: str, rows: list[dict[str, Any]]) -> Non
         rightMargin=12 * mm,
         topMargin=14 * mm,
         bottomMargin=16 * mm,
-        title=title,
+        title=metadata_title,
         author="RAB NAC Reviewer",
     )
     landscape_frame = Frame(12 * mm, 16 * mm, landscape(A4)[0] - 24 * mm, landscape(A4)[1] - 30 * mm, id="landscape")
@@ -395,16 +403,34 @@ def _write_review_pdf(path: Path, title: str, rows: list[dict[str, Any]]) -> Non
         ]
     )
 
-    story = [
-        Paragraph(_pdf_text(title), title_style),
-        Paragraph(
-            "Prosentase NAC berasal dari aturan transaksi tepercaya. Confidence menunjukkan keyakinan klasifikasi dan tidak membuat prosentase baru.",
-            body_style,
-        ),
-        Spacer(1, 5 * mm),
-    ]
+    story = [Paragraph(_pdf_text(title), title_style)]
+    if len(rab_titles) == 1:
+        story.append(Paragraph(_pdf_text(rab_titles[0]), subtitle_style))
+    elif rab_titles:
+        story.extend(
+            [
+                Paragraph("RAB:", title_list_label_style),
+                ListFlowable(
+                    [ListItem(Paragraph(_pdf_text(rab_title), title_list_style)) for rab_title in rab_titles],
+                    bulletType="bullet",
+                    leftIndent=16,
+                    bulletFontName="Helvetica",
+                    bulletFontSize=7,
+                    spaceAfter=5,
+                ),
+            ]
+        )
+    story.extend(
+        [
+            Paragraph(
+                "Prosentase NAC berasal dari aturan transaksi tepercaya. Confidence menunjukkan keyakinan klasifikasi dan tidak membuat prosentase baru.",
+                body_style,
+            ),
+            Spacer(1, 5 * mm),
+        ]
+    )
     headers = ["Source", "Item / Uraian", "Type of Transaction", "NAC", "Confidence", "Status / Keputusan"]
-    data = [[Paragraph(_pdf_text(header), label_style) for header in headers]]
+    data = [[Paragraph(_pdf_text(header), table_header_style) for header in headers]]
     display_rows = rows or [{}]
     for row in display_rows:
         data.append(
@@ -517,6 +543,33 @@ def _serializable_text(value: Any) -> str:
     if isinstance(value, (list, tuple, set)):
         return "; ".join(str(item) for item in value)
     return str(value or "")
+
+
+def _unique_rab_titles(rows: list[dict[str, Any]]) -> list[str]:
+    titles = []
+    seen = set()
+    for row in rows:
+        value = row.get("judul_rab")
+        try:
+            if value is None or pd.isna(value):
+                continue
+        except (TypeError, ValueError):
+            pass
+        title = " ".join(str(value).split())
+        key = title.casefold()
+        if title and key not in seen:
+            seen.add(key)
+            titles.append(title)
+    return titles
+
+
+def _pdf_metadata_title(report_title: str, rab_titles: list[str]) -> str:
+    if len(rab_titles) == 1:
+        combined = f"{report_title} - {rab_titles[0]}"
+        return combined if len(combined) <= 240 else combined[:237].rstrip() + "..."
+    if rab_titles:
+        return f"{report_title} - {len(rab_titles)} judul RAB"
+    return report_title
 
 
 def _context_audit(row: dict[str, Any]) -> str:

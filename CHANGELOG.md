@@ -2,6 +2,13 @@
 
 Semua penambahan fitur harus dicatat dengan format: versi, judul, tanggal, dan keterangan.
 
+## v1.4.1 - PDF RAB Title and Header Contrast - 2026-09-11
+
+- Menambahkan judul RAB kanonis di bawah judul utama pada PDF potensi NAC dan PDF seluruh material.
+- Menampilkan seluruh judul unik sebagai daftar berhalaman bila satu laporan memuat beberapa RAB.
+- Menambahkan judul RAB ke metadata PDF tanpa membaca ulang file sumber.
+- Memperbaiki keenam label header summary menjadi putih pada latar hijau agar kontras dan mudah dibaca.
+
 ## v1.4.0 - Adaptive RAB Parser and AI Review Providers - 2026-09-11
 
 - Mengganti parser posisi tetap dengan profiler adaptif untuk XLSX, XLS, CSV, PDF digital, dan PDF OCR.

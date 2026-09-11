@@ -965,7 +965,7 @@ def settings_page() -> None:
         st.markdown(version_banner())
         st.markdown(
             """
-Rilis ini memakai tag git `v1.4.0`. Untuk rollback lokal, gunakan tag stabil dari GitHub atau jalankan `git checkout v1.3.0` pada salinan repo. Untuk Streamlit Cloud, deploy ulang branch atau tag yang ingin dipakai.
+Rilis ini memakai tag git `v1.4.1`. Untuk rollback lokal, gunakan tag stabil dari GitHub atau jalankan `git checkout v1.4.0` pada salinan repo. Untuk Streamlit Cloud, deploy ulang branch atau tag yang ingin dipakai.
 """
         )
 
