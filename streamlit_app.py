@@ -240,15 +240,15 @@ def review_page() -> None:
     if preview is not None and not preview.empty:
         ui.section_label("Preview finance")
         st.dataframe(
-            preview,
+            ui.rupiah_display_styler(preview),
             width="stretch",
             hide_index=True,
             height=ui.dataframe_height(preview, 220, 430),
             column_config={
                 "Item / Uraian": st.column_config.TextColumn("Item / Uraian", width="large"),
                 "Volume": st.column_config.NumberColumn("Volume", format="%.2f"),
-                "Harga Satuan": st.column_config.NumberColumn("Harga Satuan", format="Rp %.0f"),
-                "Total": st.column_config.NumberColumn("Total", format="Rp %.0f"),
+                "Harga Satuan": st.column_config.NumberColumn("Harga Satuan", width=155),
+                "Total": st.column_config.NumberColumn("Total", width=155),
                 "Source Row": st.column_config.TextColumn("Source Row", width="small"),
             },
         )
@@ -407,11 +407,13 @@ def review_page() -> None:
     filtered = review_flow.filtered_results(results, levels, category, manual_only, query)
     findings = review_flow.review_summary_dataframe(filtered.to_dict("records") if not filtered.empty else [])
     st.dataframe(
-        findings,
+        ui.rupiah_display_styler(findings),
         width="stretch",
         hide_index=True,
         height=ui.dataframe_height(findings),
         column_config={
+            "Harga Satuan": st.column_config.NumberColumn("Harga Satuan", width=155),
+            "Total": st.column_config.NumberColumn("Total", width=155),
             "Prosentase NAC": st.column_config.TextColumn(
                 "Prosentase NAC",
                 help="Proporsi koreksi yang diterapkan dari aturan transaksi, bukan skor confidence.",
@@ -440,11 +442,13 @@ def review_page() -> None:
     with st.expander("Tabel seluruh item RAB", expanded=False):
         all_items = review_flow.all_materials_dataframe(results)
         st.dataframe(
-            all_items,
+            ui.rupiah_display_styler(all_items),
             width="stretch",
             hide_index=True,
             height=ui.dataframe_height(all_items, 240, 620),
             column_config={
+                "Harga Satuan": st.column_config.NumberColumn("Harga Satuan", width=155),
+                "Total": st.column_config.NumberColumn("Total", width=155),
                 "Prosentase NAC": st.column_config.TextColumn(
                     "Prosentase NAC",
                     help="Proporsi koreksi yang diterapkan dari aturan transaksi, bukan skor confidence.",
@@ -965,7 +969,7 @@ def settings_page() -> None:
         st.markdown(version_banner())
         st.markdown(
             """
-Rilis ini memakai tag git `v1.4.1`. Untuk rollback lokal, gunakan tag stabil dari GitHub atau jalankan `git checkout v1.4.0` pada salinan repo. Untuk Streamlit Cloud, deploy ulang branch atau tag yang ingin dipakai.
+Rilis ini memakai tag git `v1.4.2`. Untuk rollback lokal, gunakan tag stabil dari GitHub atau jalankan `git checkout v1.4.1` pada salinan repo. Untuk Streamlit Cloud, deploy ulang branch atau tag yang ingin dipakai.
 """
         )
 

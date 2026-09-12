@@ -2,6 +2,12 @@
 
 Semua penambahan fitur harus dicatat dengan format: versi, judul, tanggal, dan keterangan.
 
+## v1.4.2 - Indonesian Rupiah Display Formatting - 2026-09-12
+
+- Menampilkan nilai uang pada tabel Streamlit dengan format Rupiah dan pemisah ribuan Indonesia.
+- Memusatkan formatter Rupiah pada presentation layer tanpa mengubah nilai finansial kanonis.
+- Menerapkan format yang sama pada Preview finance, Temuan prioritas, dan Tabel seluruh item RAB.
+
 ## v1.4.1 - PDF RAB Title and Header Contrast - 2026-09-11
 
 - Menambahkan judul RAB kanonis di bawah judul utama pada PDF potensi NAC dan PDF seluruh material.

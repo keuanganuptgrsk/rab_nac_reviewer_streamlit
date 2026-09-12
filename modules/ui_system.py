@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import html
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 import pandas as pd
 import streamlit as st
@@ -319,6 +320,82 @@ def dataframe_height(frame: pd.DataFrame, minimum: int = 220, maximum: int = 560
     if frame is None or frame.empty:
         return minimum
     return max(minimum, min(maximum, 42 + (len(frame) + 1) * 35))
+
+
+def format_rupiah(value: Any) -> str:
+    """Format a scalar as Indonesian Rupiah without changing its source value."""
+    number = _decimal_from_value(value)
+    if number is None:
+        return "-"
+
+    try:
+        rounded = number.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    except InvalidOperation:
+        return "-"
+
+    sign = "-" if rounded < 0 else ""
+    absolute = rounded.copy_abs()
+    integer_part = int(absolute)
+    grouped_integer = f"{integer_part:,}".replace(",", ".")
+    if absolute == absolute.to_integral_value():
+        return f"Rp {sign}{grouped_integer}"
+
+    decimal_part = int((absolute - Decimal(integer_part)) * 100)
+    return f"Rp {sign}{grouped_integer},{decimal_part:02d}"
+
+
+def rupiah_display_styler(
+    frame: pd.DataFrame,
+    currency_columns: Iterable[str] = ("Harga Satuan", "Total"),
+) -> Any:
+    """Build a presentation-only Styler; never use it for financial calculation."""
+    display_frame = frame.copy(deep=True)
+    columns = [column for column in currency_columns if column in display_frame.columns]
+    styler = display_frame.style.format({column: format_rupiah for column in columns})
+    if columns:
+        styler = styler.set_properties(
+            subset=columns,
+            **{"text-align": "right", "white-space": "nowrap"},
+        )
+    return styler
+
+
+def _decimal_from_value(value: Any) -> Decimal | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        if bool(pd.isna(value)):
+            return None
+    except (TypeError, ValueError):
+        return None
+
+    if hasattr(value, "item"):
+        try:
+            value = value.item()
+        except (TypeError, ValueError):
+            return None
+    if isinstance(value, bool):
+        return None
+
+    text = str(value).strip()
+    if not text:
+        return None
+    if text.casefold().startswith("rp"):
+        text = text[2:].strip()
+    text = text.replace("\u00a0", "").replace(" ", "")
+    if "," in text and "." in text:
+        if text.rfind(",") > text.rfind("."):
+            text = text.replace(".", "").replace(",", ".")
+        else:
+            text = text.replace(",", "")
+    elif "," in text:
+        text = text.replace(",", ".")
+
+    try:
+        number = Decimal(text)
+    except (InvalidOperation, ValueError):
+        return None
+    return number if number.is_finite() else None
 
 
 def file_download(path: str | Path) -> tuple[bytes, str]:

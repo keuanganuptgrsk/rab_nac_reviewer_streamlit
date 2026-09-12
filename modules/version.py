@@ -1,5 +1,5 @@
-APP_VERSION = "1.4.1"
-APP_RELEASE_TITLE = "PDF RAB Title and Header Contrast"
+APP_VERSION = "1.4.2"
+APP_RELEASE_TITLE = "Indonesian Rupiah Display Formatting"
 APP_RELEASE_NOTES = (
     "Review potensi NAC dengan mudah~"
 )

@@ -2,7 +2,7 @@
 
 RAB NAC Reviewer adalah aplikasi Streamlit untuk membantu reviewer finance melakukan review awal dokumen RAB dan mendeteksi potensi NAC. Aplikasi ini tidak menggantikan keputusan reviewer; hasil deteksi wajib divalidasi terhadap PMK, kebijakan internal, dan konteks pekerjaan.
 
-Versi aktif: `v1.4.1 - PDF RAB Title and Header Contrast`.
+Versi aktif: `v1.4.2 - Indonesian Rupiah Display Formatting`.
 
 ## Fitur
 
@@ -12,6 +12,7 @@ Versi aktif: `v1.4.1 - PDF RAB Title and Header Contrast`.
 - Pilihan review `Python Lokal`, `OpenAI API`, dan `Gemini Flash API`; mode lokal selalu menjadi default sesi baru.
 - Database SQLite lokal untuk keyword NAC 2026 Kategori A/B, sinonim, allowable keyword, exception, settings, dan feedback.
 - Output review memisahkan `Prosentase NAC` sebagai aturan koreksi dan `Confidence` sebagai keyakinan klasifikasi.
+- Nilai uang pada tabel Streamlit memakai format finance Indonesia, misalnya `Rp 2.136.100`, tanpa mengubah nilai numerik untuk perhitungan dan export.
 - Stable source ID, provenance nilai, parser confidence, provider audit, dan sumber keputusan untuk penelusuran hasil.
 - Export PDF ringkasan potensi NAC, PDF seluruh material, Excel seluruh material, Excel audit lengkap, dan database keyword.
 - Backup dan restore SQLite dari UI.
@@ -187,13 +188,13 @@ Roadmap dan catatan teknis semantic berada di [docs/semantic_similarity_indonesi
 
 ## Versioning dan Rollback
 
-Rilis ini ditandai sebagai tag git `v1.4.1`.
+Rilis ini ditandai sebagai tag git `v1.4.2`.
 
 Rollback lokal:
 
 ```powershell
 git fetch --tags
-git checkout v1.4.0
+git checkout v1.4.1
 ```
 
 Rollback deploy Streamlit Cloud:
